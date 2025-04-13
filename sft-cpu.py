@@ -24,12 +24,13 @@ proton_lifetimes = {}
 previous_proton_ids = set()
 
 class QuantumUniverse:
-	def __init__(self, config_path=None):
+	def __init__(self, config_path=None, output_dir=None, verbose=False):
 		# Defaults
 		self.use_gravity = True
-		self.enable_color_flips = False
+		self.enable_color_flips = True
 		self.DT = 0.001
 		self.frame = 0
+		self.verbose = verbose
 
 		global N, PLANCK_LENGTH, E_unit, PAULI_STRENGTH, MAX_FRAMES
 
@@ -53,7 +54,10 @@ class QuantumUniverse:
 
 		# Create log directory
 		timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-		self.log_dir = os.path.join("logs", f"run_{timestamp}")
+		if output_dir:
+			self.log_dir = output_dir
+		else:
+			self.log_dir = os.path.join("logs", f"run_{timestamp}")
 		os.makedirs(self.log_dir, exist_ok=True)
 
 		# Initialize particle positions and states
@@ -94,7 +98,8 @@ class QuantumUniverse:
 
 		if ke > 10:
 			factor = 0.99
-			print(f"High KE detected: {ke:.5f}, applying strong damping...")
+			if self.verbose:
+				print(f"High KE detected: {ke:.5f}, applying strong damping...")
 		elif ke > 1:
 			factor = 0.997
 		else:
@@ -151,14 +156,19 @@ class QuantumUniverse:
 		# Track proton births/deaths
 		new_proton_ids = self.gradual_proton_birth()  # Track newly born protons
 		if len(new_proton_ids) > 0:
-			print(f"New protons born: {len(new_proton_ids)}")
+			if self.verbose:
+				print(f"New protons born: {len(new_proton_ids)}")
 			# Gradual damping effect after protons are added
 			self.velocities *= 0.995  # Apply stronger damping after protons are added
 		
-		forces = compute_forces_numba(
-			self.positions, self.spins, self.colors, N,
-			PLANCK_LENGTH, PAULI_STRENGTH,
-			self.use_gravity
+		#forces = compute_forces_numba(
+		#	self.positions, self.spins, self.colors, N,
+		#	PLANCK_LENGTH, PAULI_STRENGTH,
+		#	self.use_gravity
+		#)
+		
+		forces = compute_effective_lagrangian_forces(
+			self.positions, N, A=1.0, B=0.1, C=0.01
 		)
 		
 		# Apply gravity scaling (more gradual change during proton events)
@@ -205,42 +215,24 @@ class QuantumUniverse:
 quantum  = QuantumUniverse()
 
 @njit(parallel=True)
-def compute_forces_numba(positions, spins, colors, N, planck_length, pauli_strength, use_gravity):
+def compute_effective_lagrangian_forces(positions: np.ndarray, N: int, A: float, B: float, C: float) -> np.ndarray:
 	forces = np.zeros_like(positions)
-	G_scaled = (6.67430e-11 * 1.0**2) / (0.12**3 * 800.0)  # Assuming L_unit = 0.12, E_unit = 800.0
-
 	for i in prange(N):
 		for j in range(N):
 			if i == j:
 				continue
 
 			delta = positions[i] - positions[j]
-			dist = np.linalg.norm(delta)
-			if dist < 1e-10:
-				continue
+			dist = np.linalg.norm(delta) + 1e-8  # Avoid div by zero
 			dir_ = delta / dist
 
-			# Pauli Exclusion
-			if dist < planck_length * 0.3 and spins[i] == spins[j]:
-				forces[i] += pauli_strength * dir_ / (dist ** 4 + 1e-12)
-				continue
+			# Effective Lagrangian-derived forces
+			f1 = 3 * A * dir_ / dist**4         # Repulsive inverse-cube
+			f2 = 2 * B * dist * dir_             # Quadratic attractive
+			f3 = -C * dir_                       # Linear attractive
 
-			# Quantum forces
-			nuclear_attraction = -8.0 * np.exp(-(dist - 0.8) ** 2)
-			confinement = 0.2 * dist
-			color_factor = 1 if colors[i] == colors[j] else -1
-
-			total_force = color_factor * (nuclear_attraction + confinement) * dir_
-			forces[i] += total_force
-
-			# Gravity (mirrored)
-			if use_gravity:
-				capped_dist = max(dist, 2.0)
-				g_force_mag = G_scaled / (capped_dist ** 2)
-				gravity_force = g_force_mag * dir_
-				forces[i] += gravity_force
-				#forces[j] -= gravity_force  # NOTE: remove for strict symmetry or track separately
-
+			force = f1 + f2 + f3
+			forces[i] += force
 	return forces
 
 def append_event_log(frame, spin_flips, color_flip):
@@ -341,11 +333,13 @@ def update(frame):
 					continue
 
 			if cluster_id in quantum.stable_proton_clusters:
-				print("Already a stable proton!")
+				if quantum.verbose or HEADLESS:
+					print("Already a stable proton!")
 			unstable_clusters.update(full_cluster)
 #		elif len(cluster) == 2:
 #			unstable_clusters.update([i] + cluster)
-	print(f"Min: {min(cluster_radius_stats)}, Max: {max(cluster_radius_stats)}, Avg: {np.mean(cluster_radius_stats):.2f}")
+	if quantum.verbose or HEADLESS:
+		print(f"Min: {min(cluster_radius_stats)}, Max: {max(cluster_radius_stats)}, Avg: {np.mean(cluster_radius_stats):.2f}")
 	# Log counts
 	stable_count = len(set(proton_clusters)) // 3
 	unstable_count = len(unstable_clusters)
@@ -355,9 +349,10 @@ def update(frame):
 		proton_lifetimes[pid] = proton_lifetimes.get(pid, 0) + 1
 
 	distances = pdist(quantum.positions)
-	print("Min distance:", np.min(distances))
-	print("Max distance:", np.max(distances))
-	print("Mean distance:", np.mean(distances))
+	if quantum.verbose or HEADLESS:
+		print("Min distance:", np.min(distances))
+		print("Max distance:", np.max(distances))
+		print("Mean distance:", np.mean(distances))
 
 	# Track proton birth/death
 	just_died = previous_proton_ids - new_proton_ids
@@ -384,22 +379,22 @@ def update(frame):
 		for cluster in quantum.stable_proton_clusters
 		if cluster in quantum.proton_birth_frames
 	}
+	if quantum.verbose or HEADLESS:
+		# Terminal logging
+		print(f"Frame {frame:4}: Stable Protons: {stable_count:2} | Unstable Particles: {unstable_count:3} | KE: {quantum.kinetic_energy():.5f}")
+		print(f"New Protons: {len(just_born)} | Dissolved: {len(just_died)} | Long-lived: {sum(1 for v in proton_lifetimes.values() if v > 20)}")
 
-	# Terminal logging
-	print(f"Frame {frame:4}: Stable Protons: {stable_count:2} | Unstable Particles: {unstable_count:3} | KE: {quantum.kinetic_energy():.5f}")
-	print(f"New Protons: {len(just_born)} | Dissolved: {len(just_died)} | Long-lived: {sum(1 for v in proton_lifetimes.values() if v > 20)}")
+		if quantum.last_spin_flips > 0 or quantum.last_color_flip > 0:
+			print(f"Spin Flips: {quantum.last_spin_flips} | Color Flip: {quantum.last_color_flip}")
 
-	if quantum.last_spin_flips > 0 or quantum.last_color_flip > 0:
-		print(f"Spin Flips: {quantum.last_spin_flips} | Color Flip: {quantum.last_color_flip}")
+		cluster_sizes = Counter(len(tree.query_ball_point(quantum.positions[i], 2.2 * PLANCK_LENGTH)) for i in range(N))
+		print(f"Cluster sizes: {dict(cluster_sizes)}")
 
-	cluster_sizes = Counter(len(tree.query_ball_point(quantum.positions[i], 2.2 * PLANCK_LENGTH)) for i in range(N))
-	print(f"Cluster sizes: {dict(cluster_sizes)}")
-
-	# Optionally show detailed changes
-	if just_born:
-		print(f" Born: {sorted(just_born)}")
-	if just_died:
-		print(f" Died: {sorted(just_died)}")
+		# Optionally show detailed changes
+		if just_born:
+			print(f" Born: {sorted(just_born)}")
+		if just_died:
+			print(f" Died: {sorted(just_died)}")
 
 	# Color handling as before
 	colors_array = np.array(['blue' if c == 1 else 'red' for c in quantum.colors], dtype='<U5')
@@ -448,7 +443,8 @@ def update(frame):
 	cal = MAX_FRAMES - 1
 	if frame == cal:
 		print("Simulation complete. Closing animation.")
-		plt.close()  # This will close the window when the last frame is rendered
+		if not HEADLESS:
+			plt.close()  # This will close the window when the last frame is rendered
 	
 	return (scatter,) if not HEADLESS else None
 
@@ -458,13 +454,15 @@ if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Run the Quantum Sphere Simulation")
 	parser.add_argument('--config', type=str, help="Path to metadata.json config file")
 	parser.add_argument('--headless', action='store_true', help="Run simulation without visualization")
+	parser.add_argument('--outdir', type=str, help="Optional output directory to save logs.")
+	parser.add_argument('--verbose', action='store_true', help="Print live simulation output to terminal.")
 	args = parser.parse_args()
 	
 	if args.config and not os.path.isfile(args.config):
 		print(f"[Error] Metadata file not found: {args.config}")
 		sys.exit(1)
 
-	quantum = QuantumUniverse(config_path=args.config)
+	quantum = QuantumUniverse(config_path=args.config, output_dir=args.outdir, verbose=args.verbose)
 
 	if args.headless:
 		HEADLESS = args.headless
