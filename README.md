@@ -50,6 +50,36 @@ python sft-cpu.py --config logs/run_YYYYMMDD_HHMMSS/metadata.json --headless
 
 ---
 
+## ✅ Verified Platforms & Setup
+
+This project has been successfully tested across a variety of systems and environments:
+
+- 🐧 **Linux**  
+  - Zorin OS  
+  - Ubuntu Desktop  
+  - Ubuntu Server (headless VM)  
+- 🪟 **Windows 10 / 11**  
+  - Python via Anaconda  
+  - System-installed Python  
+- 💻 **Hardware**  
+  - Rackmount server (Dell R740)  
+  - Gaming desktop (RTX 3090)  
+  - Workstation laptop (HP ZBook 15v G5)
+
+---
+
+### 🔁 Reproducibility
+
+All test environments used the same workflow:
+
+```bash
+git clone https://github.com/Beelzebarb/sft.git
+cd sft
+pip install -r requirements.txt
+python sft-cpu.py --headless
+
+---
+
 ## 📁 Output Files
 
 All logs are written to `logs/run_TIMESTAMP/`, including:
