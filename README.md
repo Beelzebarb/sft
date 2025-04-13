@@ -63,7 +63,7 @@ This project has been successfully tested across a variety of systems and enviro
   - System-installed Python  
 - 💻 **Hardware**  
   - Rackmount server (Dell R740)  
-  - Gaming desktop (RTX 3090)  
+  - Gaming desktop (Intel Core i7-12700KF)  
   - Workstation laptop (HP ZBook 15v G5)
 
 ---
@@ -77,6 +77,7 @@ git clone https://github.com/Beelzebarb/sft.git
 cd sft
 pip install -r requirements.txt
 python sft-cpu.py --headless
+```
 
 ---
 
