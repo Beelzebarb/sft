@@ -92,6 +92,8 @@ class QuantumUniverse:
 			with open(os.path.join(self.log_dir, "metadata.json"), "w") as f:
 				json.dump(meta, f, indent=4)
 
+	def hamiltonian_energy(self, A=1.0, B=0.1, C=0.01):
+		return compute_hamiltonian_energy(self.positions, self.velocities, N, A, B, C)
 
 	def apply_energy_dissipation(self):
 		ke = self.kinetic_energy()
@@ -215,6 +217,23 @@ class QuantumUniverse:
 quantum  = QuantumUniverse()
 
 @njit(parallel=True)
+def compute_hamiltonian_energy(positions, velocities, N, A, B, C):
+    # Kinetic Energy
+    ke = 0.0
+    for i in prange(N):
+        ke += 0.5 * np.dot(velocities[i], velocities[i])
+
+    # Potential Energy
+    pe = 0.0
+    for i in prange(N):
+        for j in range(i + 1, N):
+            delta = positions[i] - positions[j]
+            dist = np.sqrt(np.dot(delta, delta)) + 1e-8
+            pe += A / dist**3 - B * dist**2 + C * dist
+
+    return ke, pe, ke + pe
+
+@njit(parallel=True)
 def compute_effective_lagrangian_forces(positions: np.ndarray, N: int, A: float, B: float, C: float) -> np.ndarray:
 	forces = np.zeros_like(positions)
 	for i in prange(N):
@@ -289,15 +308,21 @@ def write_lifetime_histogram_row(logdir, frame, lifetime_bins):
 		for bucket, count in sorted(lifetime_bins.items()):
 			writer.writerow([frame, bucket, count])
 
-def write_quantum_log_row(logdir, frame, spin_flips, color_flips, dt, ke):
+def write_quantum_log_row(logdir, frame, spin_flips, color_flips, dt, ke, pe, hamiltonian):
     path = os.path.join(logdir, "quantum_logs.csv")
     file_exists = os.path.isfile(path)
 
     with open(path, 'a', newline='') as f:
         writer = csv.writer(f)
         if not file_exists:
-            writer.writerow(["Frame", "SpinFlips", "ColorFlips", "DT", "KineticEnergy"])
-        writer.writerow([frame, spin_flips, color_flips, f"{dt:.8f}", f"{ke:.5f}"])
+            writer.writerow([
+                "Frame", "SpinFlips", "ColorFlips", "DT",
+                "KineticEnergy", "PotentialEnergy", "HamiltonianEnergy"
+            ])
+        writer.writerow([
+            frame, spin_flips, color_flips, round(dt, 6),
+            round(ke, 6), round(pe, 6), round(hamiltonian, 6)
+        ])
 
 def update(frame):
 	global previous_proton_ids
@@ -417,13 +442,17 @@ def update(frame):
 		np.min(distances), np.max(distances), np.mean(distances)
 	)
 	
+	ke, pe, h_total = compute_hamiltonian_energy(
+		quantum.positions, quantum.velocities, N,
+		A=0.005, B=0.002, C=0.001
+	)
 	write_quantum_log_row(
 		quantum.log_dir,
 		frame,
 		quantum.last_spin_flips,
 		quantum.last_color_flip,
 		quantum.DT,
-		ke
+		ke, pe, h_total
 	)
 		
 	if frame % 10 == 0:
