@@ -6,6 +6,16 @@ This project is an interactive and headless-capable simulation of a theoretical 
 
 ---
 
+## 📚 Derived Effective Theories
+
+This model incorporates:
+- An **effective Lagrangian**, with forces based on repulsive and attractive components
+- A **Hamiltonian diagnostic** tracking kinetic, potential, and total energy at each frame
+
+These derivations bring classical modeling closer to quantum-like emergence — with potential for further theoretical analysis.
+
+---
+
 ## 💡 Features
 
 - **Metastability**: Proton birth and decay from interacting triplet clusters.
@@ -83,18 +93,28 @@ No manual patching or system-specific modifications required.
 
 ✔️ Runs consistently across Python 3.8, 3.10, and 3.12.
 
----
+Each run generates a full log folder containing:
+- `summary.csv` — per-frame energy, cluster, and spatial statistics
+- `proton_lifetimes_by_frame.csv` — histogram of proton lifetimes over time
+- `quantum_logs.csv` — per-frame quantum activity: spin flips, color flips, timestep, and Hamiltonian diagnostics
+- `metadata.json` — config snapshot for full reproducibility
 
-## 📁 Output Files
-
-All logs are written to `logs/run_TIMESTAMP/`, including:
-
-- `metadata.json`: Full config for reproduction
-- `summary.csv`: Per-frame stats (KE, proton counts, distances)
-- `proton_lifetimes_by_frame.csv`: Histogram of proton lifetimes every 10 frames
-- `quantum_logs.csv`: Spin flips, color flips, DT and KE
+These results have been validated across a range of particle counts (`N=180` to `N=3000`) and environments, demonstrating long-term metastability or full stability.
 
 ---
+
+## 📂 Batch Results
+
+Benchmark runs (`N=180` through `N=3000`) are stored under `/results`, each with logs and metadata for reproducibility:
+
+```
+results/
+├── N180/
+├── N250/
+├── N500/
+├── ...
+└── N3000/
+```
 
 ## ⚙️ Configuration
 
@@ -127,6 +147,16 @@ A testbed for **Spherical Field Theory** (SFT), a novel idea that quantum behavi
 - ✅ Reproducible metastability
 - ✅ Fast multithreaded performance (via Numba)
 - 🔜 Further analysis tooling and visualizers
+
+---
+
+## 🧪 Analysis Tools
+
+*(Coming Soon)*
+
+- Scripts and notebooks to explore `summary.csv` trends (energy, stability)
+- Visual diagnostics of proton lifetimes and cluster statistics
+- Comparisons between Lagrangian and Hamiltonian dynamics
 
 ---
 
