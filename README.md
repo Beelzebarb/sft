@@ -116,6 +116,8 @@ results/
 └── N3000/
 ```
 
+---
+
 ## ⚙️ Configuration
 
 Adjust settings either in `sft-cpu.py` before running or via `metadata.json`. Key parameters include:
