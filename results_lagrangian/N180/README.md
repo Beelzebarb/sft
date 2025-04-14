@@ -1,6 +1,6 @@
 # Spherical Field Theory (SFT) Quantum Simulator - N=180 Run Details
 
-This is a resultset from the simulation running N=180 particles for 5000 frames. This data uses the effective Lagrangian forces.
+This is a resultset from the simulation running N=180 particles for 5000 frames. This data uses the effective Lagrangian forces. This data uses the effective Lagrangian forces, but does not calculate or show any Hamiltonian Energy or Potential Energy in quantum_logs.csv.
 
 ## ⚙️ Configuration
 
