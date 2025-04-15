@@ -9,8 +9,12 @@ This project is an interactive and headless-capable simulation of a theoretical 
 ## 📚 Derived Effective Theories
 
 This model incorporates:
-- An **effective Lagrangian**, with forces based on repulsive and attractive components
-- A **Hamiltonian diagnostic** tracking kinetic, potential, and total energy at each frame
+- An **effective Lagrangian**, with forces based on repulsive and attractive components:
+
+  L = Σᵢ (½ m * ẋᵢ²) - Σ_{i<j} [ A / (3|xᵢ - xⱼ|³) - (B/2) * |xᵢ - xⱼ|² + C * |xᵢ - xⱼ| ]
+- A **Hamiltonian diagnostic** tracking kinetic, potential, and total energy at each frame, below is the Hamiltonian equation:
+
+  H = Σᵢ (pᵢ² / 2m) + Σ_{i<j} [ A / |xᵢ - xⱼ|³ - B * |xᵢ - xⱼ|² + C * |xᵢ - xⱼ| ]
 
 These derivations bring classical modeling closer to quantum-like emergence — with potential for further theoretical analysis.
 
