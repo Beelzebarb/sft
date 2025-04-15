@@ -6,19 +6,21 @@ This project is an interactive and headless-capable simulation of a theoretical 
 
 ---
 
-## 📚 Derived Effective Theories
+## 📐 Theoretical Foundation
 
 This model incorporates:
-- An **effective Lagrangian**, with forces based on repulsive and attractive components:
 
-  L = Σᵢ (½ m * |vᵢ|²) - Σ_{i<j} [ A / (3 * |xᵢ - xⱼ|³) - (B / 2) * |xᵢ - xⱼ|² + C * |xᵢ - xⱼ| ]
+- The **effective Lagrangian** captures repulsive, attractive, and confining components through a custom interaction potential.
+
+  ```L = Σᵢ (½ m * |vᵢ|²) - Σ_{i<j} [ A / (3 * |xᵢ - xⱼ|³) - (B / 2) * |xᵢ - xⱼ|² + C * |xᵢ - xⱼ| ]```
+  
 - A **Hamiltonian diagnostic** tracking kinetic, potential, and total energy at each frame, below is the Hamiltonian equation:
 
-  H = Σᵢ (pᵢ² / 2m) + Σ_{i<j} [ A / |xᵢ - xⱼ|³ - B * |xᵢ - xⱼ|² + C * |xᵢ - xⱼ| ]
+  ```H = Σᵢ (pᵢ² / 2m) + Σ_{i<j} [ A / |xᵢ - xⱼ|³ - B * |xᵢ - xⱼ|² + C * |xᵢ - xⱼ| ]```
 
 - A **Euler-Lagrange** Derived force law:
 
-  m * aᵢ = Σ_{j ≠ i} [ (A / |xᵢ - xⱼ|⁴) - B * |xᵢ - xⱼ| - C ] * (xᵢ - xⱼ) / |xᵢ - xⱼ|
+  ```m * aᵢ = Σ_{j ≠ i} [ (A / |xᵢ - xⱼ|⁴) - B * |xᵢ - xⱼ| - C ] * (xᵢ - xⱼ) / |xᵢ - xⱼ|```
 
 These derivations bring classical modeling closer to quantum-like emergence — with potential for further theoretical analysis.
 
