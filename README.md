@@ -1,8 +1,14 @@
 # Spherical Field Theory (SFT) Quantum Simulator
 
-This project is an interactive and headless-capable simulation of a theoretical model of quantum behavior based on **discrete interacting spheres** in a 3D grid — a working sandbox of **spin, color, force, and emergence** at quantum scales.
+This project is a simulation based on the observable forces we know of in 3 dimensional space plus time (3+1D). The mode is a computational toy model derived from an effective Lagrangian.
 
-> Built from scratch in just 5 days using Python + Numba, this simulation showcases stable metastable behavior, emergent proton-like clusters, and self-regulating kinetic energy from first principles. No assumptions beyond 3D+time.
+This was built as a a way to answer a question that i had: "What if the quantum level was made of discrete interacting spheres?"
+
+I made this simulation, hand-tuned it and was able to achieve metastability of proton-like clusters that were forming.
+
+After that i was able to use the data i recorded and below are the equations that this model now incorporates. 
+
+When switching from hand-tuned forces to Lagrangian based forces, the Kinetic Energy after about 2100+ frames out of 5000 would hit a perfect stability across increasingly larger particle count runs of the simulation.
 
 ---
 
