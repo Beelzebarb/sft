@@ -1,6 +1,6 @@
 # Spherical Field Theory (SFT) Quantum Simulator
 
-This project is a simulation based on the observable forces we know of in 3 dimensional space plus time (3+1D). The model is a computational toy model derived from an effective Lagrangian.
+This project is a simulation based on the observable forces we know of in 3 dimensional space plus time (3+1D) operating at the Planck/Quantum scale. The model is a computational toy model derived from an effective Lagrangian.
 
 This was built as a way to answer a question that i had: "What if the quantum level was made of discrete interacting spheres?"
 
