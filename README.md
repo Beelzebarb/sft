@@ -1,6 +1,6 @@
 # Spherical Field Theory (SFT) Quantum Simulator
 
-This project is a simulation based on the observable forces we know of in 3 dimensional space plus time (3+1D). The mode is a computational toy model derived from an effective Lagrangian.
+This project is a simulation based on the observable forces we know of in 3 dimensional space plus time (3+1D). The model is a computational toy model derived from an effective Lagrangian.
 
 This was built as a way to answer a question that i had: "What if the quantum level was made of discrete interacting spheres?"
 
@@ -9,6 +9,10 @@ I made this simulation, hand-tuned it and was able to achieve metastability of p
 After that i was able to use the data i recorded and below are the equations that this model now incorporates. 
 
 When switching from hand-tuned forces to Lagrangian based forces, the Kinetic Energy after about 2100+ frames out of 5000 would hit a perfect stability across increasingly larger particle count runs of the simulation.
+
+Yes, this model uses a classical framework. Yes, this model uses force-field based interactions, which are related to force-field based Molecular Dynamics.
+
+Yes, the model is showing possible quantum-like emergent behavior that i did not specifically code.
 
 ---
 
