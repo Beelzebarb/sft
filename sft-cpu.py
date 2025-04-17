@@ -15,6 +15,8 @@ L_unit = 0.12              	# PLANCK_LENGTH (used for scaling forces/distances?)
 E_unit = 800.0             	# BINDING_ENERGY (used for normalization / maybe force constants)
 PLANCK_LENGTH = 5.0        	# Actual working interaction scale
 PAULI_STRENGTH = 0.25      	# Effective Pauli repulsion factor
+
+# Simulation Parameters
 N = 500                   	# Particle count
 MAX_FRAMES = 5000			# Maximum Frames to run
 HEADLESS = False			# Headless mode toggle
@@ -31,6 +33,10 @@ class QuantumUniverse:
 		self.DT = 0.001
 		self.frame = 0
 		self.verbose = verbose
+		
+		self.A = 1.0
+		self.B = 0.1
+		self.C = 0.01
 
 		global N, PLANCK_LENGTH, E_unit, PAULI_STRENGTH, MAX_FRAMES
 
@@ -46,11 +52,25 @@ class QuantumUniverse:
 			MAX_FRAMES = config.get("max_frames", MAX_FRAMES)
 			self.use_gravity = config.get("use_gravity", self.use_gravity)
 			self.enable_color_flips = config.get("enable_color_flips", self.enable_color_flips)
-
+		
+		# For stable proton-like clusters (3-sphere clusters with charge of +1 or superprotons, which are +2.
 		self.stable_proton_clusters = set()
 		self.proton_birth_frames = {}
 		self.proton_death_frames = {}
-		self.frame = 0
+		self.proton_charges = {}
+		
+		# For non-proton cluster tracking by cluster size
+		self.cluster_birth_frames = defaultdict(dict)     # {size: {cluster_id: frame}}
+		self.cluster_death_frames = defaultdict(dict)     # {size: {cluster_id: frame}}
+		self.cluster_lifetimes = defaultdict(dict)        # {size: {cluster_id: lifetime}}
+
+		# Current active clusters by size (used per frame)
+		self.current_clusters_by_size = defaultdict(set)
+		self.previous_clusters_by_size = defaultdict(set)
+		
+		self.superproton_ids = set()
+		self.proton_ids = set()
+		self.unstable_clusters = set()
 
 		# Create log directory
 		timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -94,20 +114,6 @@ class QuantumUniverse:
 
 	def hamiltonian_energy(self, A=1.0, B=0.1, C=0.01):
 		return compute_hamiltonian_energy(self.positions, self.velocities, N, A, B, C)
-
-	def apply_energy_dissipation(self):
-		ke = self.kinetic_energy()
-
-		if ke > 10:
-			factor = 0.99
-			if self.verbose:
-				print(f"High KE detected: {ke:.5f}, applying strong damping...")
-		elif ke > 1:
-			factor = 0.997
-		else:
-			factor = 0.999  # Minimal damping during calm periods
-
-		self.velocities *= factor
 
 	def gradual_proton_birth(self, rate=0.005):
 		# Gradually add protons at a specific rate over time
@@ -206,11 +212,23 @@ class QuantumUniverse:
 		
 		#print(f"Mean velocity: {np.linalg.norm(self.velocities, axis=1).mean():.5f}")
 		
-		self.apply_energy_dissipation() # Moved here after velocities are set but before positions are set.
+		# Local emergent damping (force-responsive)
+		for i in range(self.positions.shape[0]):
+			force = forces[i]
+			velocity = self.velocities[i]
+
+			force_magnitude = np.linalg.norm(force)
+			if force_magnitude > 0:
+				# Apply damping based on local force magnitude
+				damping_strength = 0.001  # You can tune this lower or higher
+				damping_force = -velocity * force_magnitude * damping_strength
+				self.velocities[i] += damping_force * self.DT
 
 		self.positions += self.velocities * self.DT
 		self.positions = np.clip(self.positions, 0, 6)
-
+		
+		self.frame += 1
+		
 		return self.kinetic_energy()
 
 # Initialize quantum universe
@@ -254,17 +272,34 @@ def compute_effective_lagrangian_forces(positions: np.ndarray, N: int, A: float,
 			forces[i] += force
 	return forces
 
-def append_event_log(frame, spin_flips, color_flip):
-	file_path = "quantum_events.csv"
-	write_header = not os.path.exists(file_path) or os.path.getsize(file_path) == 0
+@njit
+def compute_cluster_energy(cluster_indices, positions, velocities, A, B, C):
+    ke = 0.0
+    for i in range(len(cluster_indices)):
+        idx = cluster_indices[i]
+        v = velocities[idx]
+        ke += 0.5 * (v[0]**2 + v[1]**2 + v[2]**2)
 
-	with open(file_path, "a") as f:
-		if write_header:
-			f.write("frame,event,value\n")
-		if spin_flips > 0:
-			f.write(f"{frame},spin,{spin_flips}\n")
-		if color_flip:
-			f.write(f"{frame},color,1\n")
+    pe = 0.0
+    for i in range(len(cluster_indices)):
+        for j in range(i + 1, len(cluster_indices)):
+            i_idx = cluster_indices[i]
+            j_idx = cluster_indices[j]
+            dx = positions[i_idx][0] - positions[j_idx][0]
+            dy = positions[i_idx][1] - positions[j_idx][1]
+            dz = positions[i_idx][2] - positions[j_idx][2]
+            r = (dx*dx + dy*dy + dz*dz)**0.5
+            pe += A / (r**3) - B * (r**2) + C * r
+
+    return ke + pe
+
+def color_to_charge(color):
+	return {0: +1, 1: 0, 2: -1}[color]
+	
+def cluster_charge(cluster_indices, colors):
+	return sum(color_to_charge(colors[i]) for i in cluster_indices)
+
+######################## Logging functions for writing to CSV files. ########################
 
 def write_summary_row(
 	logdir, frame, ke, stable_count, unstable_count,
@@ -324,45 +359,210 @@ def write_quantum_log_row(logdir, frame, spin_flips, color_flips, dt, ke, pe, ha
             round(ke, 6), round(pe, 6), round(hamiltonian, 6)
         ])
 
+def write_proton_charges(logdir, frame, charge_data):
+	path = os.path.join(logdir, "proton_charges.csv")
+	file_exists = os.path.isfile(path)
+
+	with open(path, 'a', newline='') as f:
+		writer = csv.writer(f)
+		if not file_exists:
+			writer.writerow(["Frame", "ClusterID", "Charge"])
+
+		for cluster_id, charge in charge_data:
+			cluster_label = "-".join(map(str, sorted(cluster_id)))
+			writer.writerow([frame, cluster_label, charge])
+
+def write_lifetimes_by_charge(logdir, frame, birth_frames, death_frames, charges):
+	path = os.path.join(logdir, "proton_lifetimes_by_charge.csv")
+	file_exists = os.path.isfile(path)
+
+	with open(path, 'a', newline='') as f:
+		writer = csv.writer(f)
+		if not file_exists:
+			writer.writerow(["Frame", "ClusterID", "Charge", "Lifetime"])
+
+		for cluster in birth_frames:
+			if cluster in death_frames and cluster in charges:
+				birth = birth_frames[cluster]
+				death = death_frames[cluster]
+				charge = charges[cluster]
+				lifetime = death - birth
+				cluster_label = "-".join(map(str, sorted(cluster)))
+				writer.writerow([frame, cluster_label, charge, lifetime])
+				
+def write_charge_lifetimes_framewise(logdir, frame, birth_frames, active_clusters, charges):
+    path = os.path.join(logdir, "proton_charge_lifetimes.csv")
+    file_exists = os.path.isfile(path)
+
+    with open(path, 'a', newline='') as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["Frame", "ClusterID", "Charge", "Lifetime"])
+
+        for cluster in active_clusters:
+            if cluster in birth_frames and cluster in charges:
+                birth = birth_frames[cluster]
+                charge = charges[cluster]
+                lifetime = frame - birth
+                cluster_label = "-".join(map(str, sorted(cluster)))
+                writer.writerow([frame, cluster_label, charge, lifetime])
+
+def write_binding_energy(logdir, energy_log_data):
+	path = os.path.join(logdir, "proton_binding_energy.csv")
+	file_exists = os.path.isfile(path)
+	with open(path, 'a', newline='') as f:
+		writer = csv.writer(f)
+		if not file_exists:
+			writer.writerow(["Frame", "ClusterID", "Charge", "BindingEnergy"])
+		for frame, cluster, charge, energy in energy_log_data:
+			cluster_str = "-".join(map(str, sorted(cluster)))
+			writer.writerow([frame, cluster_str, charge, energy])
+
+def write_unstable_particles(logdir, unstable_log_data):
+    path = os.path.join(logdir, "unstable_particles.csv")
+    file_exists = os.path.isfile(path)
+    with open(path, 'a', newline='') as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["Frame", "ClusterID", "FailureReason"])
+        for frame, cluster_id, reason in unstable_log_data:
+            cluster_str = "-".join(map(str, sorted(cluster_id)))
+            writer.writerow([frame, cluster_str, reason])
+
+def write_unknown_particles(logdir, data):
+    path = os.path.join(logdir, "unknown_particles.csv")
+    file_exists = os.path.isfile(path)
+    with open(path, 'a', newline='') as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["Frame", "ClusterID", "Reason"])
+        for frame, cluster_id, reason in data:
+            writer.writerow([frame, "-".join(map(str, sorted(cluster_id))), reason])
+
+def write_cluster_lifetimes(logdir, cluster_lifetimes):
+	"""
+	Writes cluster lifetime data to one CSV per cluster size.
+	Each file contains: ClusterID, BirthFrame, DeathFrame, Lifetime
+	"""
+	for size, lifetimes in cluster_lifetimes.items():
+		filename = f"cluster_lifetimes_size_{size}.csv"
+		filepath = os.path.join(logdir, filename)
+
+		file_exists = os.path.isfile(filepath)
+		with open(filepath, 'a', newline='') as f:
+			writer = csv.writer(f)
+			if not file_exists:
+				writer.writerow(["ClusterID", "BirthFrame", "DeathFrame", "Lifetime"])
+
+			for cid, lifetime in lifetimes.items():
+				birth = quantum.cluster_birth_frames[size].get(cid, "unknown")
+				death = quantum.cluster_death_frames[size].get(cid, "unknown")
+
+				# Format ClusterID as a readable sorted list
+				cid_str = "-".join(map(str, sorted(cid)))
+				writer.writerow([cid_str, birth, death, lifetime])
+
+######################## Logging functions for writing to CSV files. ########################
+
 def update(frame):
 	global previous_proton_ids
-	
+
 	ke = quantum.update()
-	
+
 	radius = 0.1 * PLANCK_LENGTH
-	
-	append_event_log(frame, quantum.last_spin_flips, quantum.last_color_flip)
-	
+
 	tree = cKDTree(quantum.positions)
 	proton_clusters = []
+	charge_log_data = []
+	energy_log_data = []
+	unstable_log_data = []
 	cluster_radius_stats = []
 	unstable_clusters = set()
 	new_proton_ids = set()
+	charge_log_ids = set()
+	seen_cluster_ids = set()
+	cluster_size_histogram = defaultdict(int)
+	clusters_by_size = defaultdict(list)
+	unknown_particle_log = []  # New: catch-all for non-proton-like clusters
+	quantum.unstable_clusters.clear()
+
 	for i in range(N):
 		cluster = tree.query_ball_point(quantum.positions[i], radius)
 		cluster = [j for j in cluster if j != i]  # NOW back in
 		cluster_radius_stats.append(len(cluster))
 
-		if len(cluster) == 2:
-			full_cluster = [i] + cluster
-			cluster_id = frozenset(full_cluster)
+		full_cluster = [i] + cluster
+		cluster_id = frozenset(full_cluster)
+		
+		if cluster_id in seen_cluster_ids:
+			continue  # Already processed
+
+		seen_cluster_ids.add(cluster_id)
+		cluster_size = len(full_cluster)
+		quantum.current_clusters_by_size[cluster_size].add(cluster_id)
+
+		if cluster_id not in quantum.previous_clusters_by_size[cluster_size]:
+			#print(f"[DEBUG] Frame {frame}: registering birth for cluster {cluster_id} (size {cluster_size})")
+			quantum.cluster_birth_frames[cluster_size][cluster_id] = quantum.frame
+		
+		# Track this cluster size
+		cluster_size_histogram[cluster_size] += 1
+
+		# Optionally: track cluster ID by size for future analysis
+		clusters_by_size.setdefault(cluster_size, []).append(full_cluster)
+
+		# You can still filter 3-spheres for proton/superproton rules below
+		if cluster_size == 3:
 			spins = quantum.spins[full_cluster]
 			colors = quantum.colors[full_cluster]
 			unique_colors = set(colors)
-			
-			if len(unique_colors) in (1, 2) and abs(sum(spins)) <= 1:
-				counts = [list(colors).count(c) for c in unique_colors]
-				if sorted(counts) == [1, 2]:
-					new_proton_ids.add(cluster_id)
-					proton_clusters.extend(full_cluster)
-					continue
 
-			if cluster_id in quantum.stable_proton_clusters:
-				if quantum.verbose or HEADLESS:
-					print("Already a stable proton!")
-			unstable_clusters.update(full_cluster)
-#		elif len(cluster) == 2:
-#			unstable_clusters.update([i] + cluster)
+			counts = [list(colors).count(c) for c in unique_colors]
+
+			# Check if it's a valid proton or superproton
+			if len(unique_colors) in (1, 2) and abs(sum(spins)) <= 1 and sorted(counts) == [1, 2]:
+				if cluster_id not in charge_log_ids:
+					charge_log_ids.add(cluster_id)
+					charge = cluster_charge(full_cluster, quantum.colors)
+					cluster_energy = compute_cluster_energy(
+						full_cluster,
+						quantum.positions,
+						quantum.velocities,
+						quantum.A, quantum.B, quantum.C
+					)
+
+					if quantum.verbose or HEADLESS:
+						print(f"Frame {frame}: Proton Cluster {full_cluster} → Net Charge: {charge} | Binding Energy: {cluster_energy:.5f}")
+
+					quantum.proton_charges[cluster_id] = charge
+					charge_log_data.append((cluster_id, charge))
+					if charge == 1:
+						quantum.proton_ids.add(cluster_id)
+					elif charge == 2:
+						quantum.superproton_ids.add(cluster_id)
+
+					energy_log_data.append((frame, cluster_id, charge, cluster_energy))
+
+				new_proton_ids.add(cluster_id)
+				proton_clusters.extend(full_cluster)
+				continue  # skip the unstable logic below
+			else:
+				# Failed 3-sphere classification
+				if len(unique_colors) not in (1, 2):
+					reason = "color_mismatch"
+				elif abs(sum(spins)) > 1:
+					reason = "spin_violation"
+				elif sorted(counts) != [1, 2]:
+					reason = "color_ratio_wrong"
+				else:
+					reason = "unknown_failure"
+
+				unstable_clusters.update(full_cluster)
+				unstable_log_data.append((frame, cluster_id, reason))
+		else:
+			reason = f"size_{cluster_size}"
+			unknown_particle_log.append((frame, cluster_id, reason))
+
 	if quantum.verbose or HEADLESS:
 		print(f"Min: {min(cluster_radius_stats)}, Max: {max(cluster_radius_stats)}, Avg: {np.mean(cluster_radius_stats):.2f}")
 	# Log counts
@@ -385,7 +585,7 @@ def update(frame):
 	# Record proton death frames
 	for cluster in just_died:
 		if cluster not in quantum.proton_death_frames:
-			quantum.proton_death_frames[cluster] = frame
+			quantum.proton_death_frames[cluster] = quantum.frame
 	
 	just_born = new_proton_ids - previous_proton_ids
 	previous_proton_ids = new_proton_ids
@@ -396,14 +596,26 @@ def update(frame):
 	# Track proton birth frames
 	for cluster in just_born:
 		if cluster not in quantum.proton_birth_frames:
-			quantum.proton_birth_frames[cluster] = frame
-
+			quantum.proton_birth_frames[cluster] = quantum.frame
+	
+	#print(f"[DEBUG] Total birth frames tracked: {sum(len(v) for v in quantum.cluster_birth_frames.values())}")
+	
 	# Compute lifetime of existing protons
 	lifetimes = {
 		cluster: frame - quantum.proton_birth_frames[cluster]
 		for cluster in quantum.stable_proton_clusters
 		if cluster in quantum.proton_birth_frames
 	}
+	
+	# Detect deaths and update lifetimes
+	for size in quantum.previous_clusters_by_size:
+		just_died = quantum.previous_clusters_by_size[size] - quantum.current_clusters_by_size[size]
+		for cid in just_died:
+			if cid not in quantum.cluster_death_frames[size]:
+				birth = quantum.cluster_birth_frames[size].get(cid, quantum.frame - 1)
+				quantum.cluster_death_frames[size][cid] = quantum.frame
+				quantum.cluster_lifetimes[size][cid] = quantum.frame - birth
+		
 	if quantum.verbose or HEADLESS:
 		# Terminal logging
 		print(f"Frame {frame:4}: Stable Protons: {stable_count:2} | Unstable Particles: {unstable_count:3} | KE: {quantum.kinetic_energy():.5f}")
@@ -446,6 +658,7 @@ def update(frame):
 		quantum.positions, quantum.velocities, N,
 		A=0.005, B=0.002, C=0.001
 	)
+	
 	write_quantum_log_row(
 		quantum.log_dir,
 		frame,
@@ -454,8 +667,19 @@ def update(frame):
 		quantum.DT,
 		ke, pe, h_total
 	)
-		
+	
+	if frame > 0 and frame % 100 == 0:
+		write_unstable_particles(quantum.log_dir, unstable_log_data)
+		write_unknown_particles(quantum.log_dir, unknown_particle_log)
+	
 	if frame % 10 == 0:
+		write_charge_lifetimes_framewise(
+			quantum.log_dir,
+			frame,
+			quantum.proton_birth_frames,
+			quantum.stable_proton_clusters,
+			quantum.proton_charges
+		)
 		lifetimes = {
 			cluster: frame - quantum.proton_birth_frames[cluster]
 			for cluster in quantum.stable_proton_clusters
@@ -468,12 +692,38 @@ def update(frame):
 			lifetime_bins[bucket] += 1
 
 		write_lifetime_histogram_row(quantum.log_dir, frame, lifetime_bins)
-	
+		
+		write_binding_energy(quantum.log_dir, energy_log_data)
+		
 	cal = MAX_FRAMES - 1
 	if frame == cal:
-		print("Simulation complete. Closing animation.")
+		#print("[DEBUG] Final frame reached, checking cluster survival...")
+		#print(f"[DEBUG] Final cluster size map: {dict((k, len(v)) for k, v in quantum.current_clusters_by_size.items())}")
+		for size, active_clusters in quantum.current_clusters_by_size.items():
+			#print(f"[DEBUG] Size {size}: {len(active_clusters)} clusters")
+			for cid in active_clusters:
+				if cid not in quantum.cluster_birth_frames[size]:
+					#print(f"[DEBUG] Cluster {cid} has no recorded birth.")
+					continue
+				birth = quantum.cluster_birth_frames[size][cid]
+				lifetime = MAX_FRAMES - birth
+				quantum.cluster_death_frames[size][cid] = MAX_FRAMES
+				quantum.cluster_lifetimes[size][cid] = lifetime
+
+		total_lifetimes = sum(len(v) for v in quantum.cluster_lifetimes.values())
+		#print(f"[DEBUG] Total lifetimes recorded: {total_lifetimes}")
+
+		write_cluster_lifetimes(quantum.log_dir, quantum.cluster_lifetimes)
+		#print("Simulation complete. Closing animation.")
 		if not HEADLESS:
 			plt.close()  # This will close the window when the last frame is rendered
+	else:
+		# Swap trackers for next frame
+		quantum.previous_clusters_by_size = {
+			size: set(clusters)
+			for size, clusters in quantum.current_clusters_by_size.items()
+		}
+		quantum.current_clusters_by_size = defaultdict(set)
 	
 	return (scatter,) if not HEADLESS else None
 
