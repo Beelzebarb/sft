@@ -12,7 +12,7 @@ When switching from hand-tuned forces to Lagrangian based forces, the Kinetic En
 
 Yes, this model uses a classical framework. Yes, this model uses force-field based interactions, which are related to force-field based Molecular Dynamics.
 
-Yes, the model is showing possible quantum-like emergent behavior that i did not specifically code.
+Yes, this model is showing possible quantum-like emergent behavior that i did not specifically code.
 
 ---
 
