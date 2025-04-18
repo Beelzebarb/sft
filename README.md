@@ -1,5 +1,13 @@
 # Spherical Field Theory (SFT) Quantum Simulator
 
+UPDATE: This simulation has died a horrible death, the equations broke down once the simulation was moved over to toroidal space. 
+
+Runaway kinetic enerrgy no dampening would fix, things would still form, but the previous stability i had seen it seems was entirely because of globally applied damping rules that once removed and taken fully local, the equations do not work, either mine or Lennard-Jones based equations which was also tried.
+
+Unless someone else can fix the math, this project isn't ever going to work.
+
+---
+
 This project is a simulation based on the observable forces we know of in 3 dimensional space plus time (3+1D) operating at the Planck/Quantum scale. The model is a computational toy model derived from an effective Lagrangian.
 
 This was built as a way to answer a question that i had: "What if the quantum level was made of discrete interacting spheres?"
