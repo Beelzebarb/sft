@@ -4,6 +4,8 @@ UPDATE: This simulation has died a horrible death, the equations broke down once
 
 Runaway kinetic enerrgy no dampening would fix, things would still form, but the previous stability i had seen it seems was entirely because of globally applied damping rules that once removed and taken fully local, the equations do not work, either mine or Lennard-Jones based equations which was also tried.
 
+The other thing that does work, was toroidal space is set up correctly in the simulation, its just the equations themselves are incorrect.
+
 Unless someone else can fix the math, this project isn't ever going to work.
 
 ---
