@@ -8,7 +8,7 @@ from matplotlib.animation import FuncAnimation
 from scipy.spatial import cKDTree, distance
 from scipy.spatial.distance import pdist
 from collections import Counter
-import os, json, csv
+import os, json, csv, time, math
 
 # Quantum Physics Parameters
 L_unit = 0.12              	# PLANCK_LENGTH (used for scaling forces/distances?)
@@ -17,28 +17,36 @@ PLANCK_LENGTH = 5.0        	# Actual working interaction scale
 PAULI_STRENGTH = 0.25      	# Effective Pauli repulsion factor
 
 # Simulation Parameters
-N = 500                   	# Particle count
 MAX_FRAMES = 5000			# Maximum Frames to run
+BOX_SIZE = 6.0				# Size of box/cube
 HEADLESS = False			# Headless mode toggle
 
 #Global proton state trackers
 proton_lifetimes = {}
 previous_proton_ids = set()
+start_time = time.time()
 
 class QuantumUniverse:
 	def __init__(self, config_path=None, output_dir=None, verbose=False):
 		# Defaults
 		self.use_gravity = True
-		self.enable_color_flips = True
+		self.enable_color_flips = False
 		self.DT = 0.001
 		self.frame = 0
 		self.verbose = verbose
+		self.BOX_SIZE = BOX_SIZE
 		
 		self.A = 1.0
-		self.B = 0.1
-		self.C = 0.01
+		self.B = +0.01
+		self.C = +0.005
+		
+		self.epsilon = 1.0    # Depth of potential well (how strong binding is)
+		self.sigma = 1.0      # Preferred separation distance
 
-		global N, PLANCK_LENGTH, E_unit, PAULI_STRENGTH, MAX_FRAMES
+		global PLANCK_LENGTH, E_unit, PAULI_STRENGTH, MAX_FRAMES
+		
+		#Default frames, will change with loaded config automatically.#
+		N = 500
 
 		# Load overrides from metadata.json if provided
 		if config_path:
@@ -81,18 +89,21 @@ class QuantumUniverse:
 		os.makedirs(self.log_dir, exist_ok=True)
 
 		# Initialize particle positions and states
-		box_size = 6.0
-		grid_spacing = 0.35
-		num_per_axis = int(box_size // grid_spacing)
-		coords = np.linspace(0, box_size, num=num_per_axis)
+		grid_spacing = self.sigma * 0.75
+		num_per_axis = int(self.BOX_SIZE // grid_spacing)
+		coords = np.linspace(0, self.BOX_SIZE, num=num_per_axis)
 		positions = np.array(np.meshgrid(coords, coords, coords)).T.reshape(-1, 3)
 		np.random.shuffle(positions)
 		self.positions = positions[:N]
+		self.N = self.positions.shape[0]
 
-		self.velocities = np.random.randn(N, 3) * 0.01
-		self.spins = np.random.choice([-1, 1], N)
-		self.colors = np.random.randint(0, 2, N)
-		self.lifetimes = np.zeros(N)
+		#self.velocities = np.random.randn(N, 3) * 0.01
+		self.velocities = np.zeros_like(self.positions)
+		self.spins = np.random.choice([-1, 1], self.N)
+		self.colors = np.random.randint(0, 2, self.N)
+		self.lifetimes = np.zeros(self.N)
+		
+		assert self.positions.shape[0] == self.velocities.shape[0] == self.spins.shape[0], "Mismatch in particle array lengths!"
 
 		self.last_spin_flips = 0
 		self.last_color_flip = 0
@@ -100,7 +111,7 @@ class QuantumUniverse:
 		# Write metadata (optional: only if no config was passed)
 		if not config_path:
 			meta = {
-				"N": N,
+				"N": self.N,
 				"planck_length": PLANCK_LENGTH,
 				"binding_energy": E_unit,
 				"pauli_strength": PAULI_STRENGTH,
@@ -111,18 +122,6 @@ class QuantumUniverse:
 			}
 			with open(os.path.join(self.log_dir, "metadata.json"), "w") as f:
 				json.dump(meta, f, indent=4)
-
-	def hamiltonian_energy(self, A=1.0, B=0.1, C=0.01):
-		return compute_hamiltonian_energy(self.positions, self.velocities, N, A, B, C)
-
-	def gradual_proton_birth(self, rate=0.005):
-		# Gradually add protons at a specific rate over time
-		num_new_protons = int(rate * N)  # Adjust the rate as necessary
-		new_protons = np.random.choice(N, num_new_protons, replace=False)
-		# Modify the positions, spins, and colors of the new protons
-		self.spins[new_protons] = np.random.choice([-1, 1], num_new_protons)
-		self.colors[new_protons] = np.random.randint(0, 2, num_new_protons)
-		return new_protons  # Return the new proton IDs
 
 	# Gravity scaling: Increase gravity effect as spheres compress (based on density or distance)
 	def scale_gravity_effect(self):
@@ -145,8 +144,12 @@ class QuantumUniverse:
 		return 0.5 * np.sum(self.velocities ** 2)
 
 	def update(self):
+		assert self.positions.shape[0] == self.N, f"[CRITICAL] N mismatch: positions has {self.positions.shape[0]}, but N = {self.N}"
+		
+		
 		self.lifetimes += self.DT
-		decohere = self.lifetimes > 0.3 + np.random.rand(N) * 0.2
+		#decohere = self.lifetimes > 0.3 + np.random.rand(N) * 0.2 - allows for spin flips, removed to debug energy accumulation issues.
+		decohere = np.zeros(self.N, dtype=bool)
 		self.last_spin_flips = np.count_nonzero(decohere)
 		self.spins[decohere] *= -1
 		self.lifetimes[decohere] = 0
@@ -161,23 +164,18 @@ class QuantumUniverse:
 			self.colors[flip_mask] = 1 - self.colors[flip_mask]
 			self.last_color_flip = np.count_nonzero(prev_colors != self.colors)
 		
-		# Track proton births/deaths
-		new_proton_ids = self.gradual_proton_birth()  # Track newly born protons
-		if len(new_proton_ids) > 0:
-			if self.verbose:
-				print(f"New protons born: {len(new_proton_ids)}")
-			# Gradual damping effect after protons are added
-			self.velocities *= 0.995  # Apply stronger damping after protons are added
-		
-		#forces = compute_forces_numba(
-		#	self.positions, self.spins, self.colors, N,
-		#	PLANCK_LENGTH, PAULI_STRENGTH,
-		#	self.use_gravity
-		#)
-		
-		forces = compute_effective_lagrangian_forces(
-			self.positions, N, A=1.0, B=0.1, C=0.01
+		forces = compute_lj_forces(
+			self.positions, self.N,
+			epsilon=self.epsilon,
+			sigma=self.sigma,
+			BOX_SIZE=self.BOX_SIZE,
+			PLANCK_LENGTH=PLANCK_LENGTH
 		)
+		
+		print("Forces shape:", forces.shape)
+		if not np.all(np.isfinite(forces)):
+			print("[ERROR] Force array contains NaN or inf!")
+			exit(1)
 		
 		# Apply gravity scaling (more gradual change during proton events)
 		scaling_factor = self.scale_gravity_effect()
@@ -213,19 +211,19 @@ class QuantumUniverse:
 		#print(f"Mean velocity: {np.linalg.norm(self.velocities, axis=1).mean():.5f}")
 		
 		# Local emergent damping (force-responsive)
-		for i in range(self.positions.shape[0]):
-			force = forces[i]
-			velocity = self.velocities[i]
-
-			force_magnitude = np.linalg.norm(force)
-			if force_magnitude > 0:
-				# Apply damping based on local force magnitude
-				damping_strength = 0.001  # You can tune this lower or higher
-				damping_force = -velocity * force_magnitude * damping_strength
-				self.velocities[i] += damping_force * self.DT
+		#for i in range(self.positions.shape[0]):
+		#	force = forces[i]
+		#	velocity = self.velocities[i]
+		#
+		#	force_magnitude = np.linalg.norm(force)
+		#	if force_magnitude > 0:
+		#		# Apply damping based on local force magnitude
+		#		damping_strength = 0.002  # You can tune this lower or higher
+		#		damping_force = -velocity * force_magnitude * damping_strength
+		#		self.velocities[i] += damping_force * self.DT
 
 		self.positions += self.velocities * self.DT
-		self.positions = np.clip(self.positions, 0, 6)
+		self.positions %= BOX_SIZE
 		
 		self.frame += 1
 		
@@ -234,64 +232,146 @@ class QuantumUniverse:
 # Initialize quantum universe
 quantum  = QuantumUniverse()
 
+# Lennard-Jones pairwise force calculation with periodic boundaries and cutoff
 @njit(parallel=True)
-def compute_hamiltonian_energy(positions, velocities, N, A, B, C):
-    # Kinetic Energy
-    ke = 0.0
-    for i in prange(N):
-        ke += 0.5 * np.dot(velocities[i], velocities[i])
-
-    # Potential Energy
-    pe = 0.0
-    for i in prange(N):
-        for j in range(i + 1, N):
-            delta = positions[i] - positions[j]
-            dist = np.sqrt(np.dot(delta, delta)) + 1e-8
-            pe += A / dist**3 - B * dist**2 + C * dist
-
-    return ke, pe, ke + pe
-
-@njit(parallel=True)
-def compute_effective_lagrangian_forces(positions: np.ndarray, N: int, A: float, B: float, C: float) -> np.ndarray:
+def compute_lj_forces(positions, N, epsilon, sigma, BOX_SIZE, PLANCK_LENGTH):
 	forces = np.zeros_like(positions)
+	cutoff_radius_squared = (2.5 * PLANCK_LENGTH) ** 2
+	min_r2 = 1e-4  # Prevent r2 from being too small
+
 	for i in prange(N):
-		for j in range(N):
-			if i == j:
+		for j in range(i + 1, N):
+			dx = positions[i][0] - positions[j][0]
+			dy = positions[i][1] - positions[j][1]
+			dz = positions[i][2] - positions[j][2]
+
+			# Periodic boundary correction
+			if dx > 0.5 * BOX_SIZE:
+				dx -= BOX_SIZE
+			elif dx < -0.5 * BOX_SIZE:
+				dx += BOX_SIZE
+			if dy > 0.5 * BOX_SIZE:
+				dy -= BOX_SIZE
+			elif dy < -0.5 * BOX_SIZE:
+				dy += BOX_SIZE
+			if dz > 0.5 * BOX_SIZE:
+				dz -= BOX_SIZE
+			elif dz < -0.5 * BOX_SIZE:
+				dz += BOX_SIZE
+
+			r2 = dx*dx + dy*dy + dz*dz
+			if r2 < min_r2 or r2 > cutoff_radius_squared:
 				continue
 
-			delta = positions[i] - positions[j]
-			dist = np.linalg.norm(delta) + 1e-8  # Avoid div by zero
-			dir_ = delta / dist
+			inv_r2 = 1.0 / r2
+			inv_r6 = (sigma * sigma * inv_r2) ** 3
+			inv_r12 = inv_r6 * inv_r6
 
-			# Effective Lagrangian-derived forces
-			f1 = 3 * A * dir_ / dist**4         # Repulsive inverse-cube
-			f2 = 2 * B * dist * dir_             # Quadratic attractive
-			f3 = -C * dir_                       # Linear attractive
+			f_mag = 24 * epsilon * inv_r2 * (2 * inv_r12 - inv_r6)
+			
+			if not math.isfinite(f_mag):
+				print(f"[FATAL] Bad f_mag at r²={r2}, f_mag={f_mag}, dx={dx}, dy={dy}, dz={dz}")
+				continue
 
-			force = f1 + f2 + f3
-			forces[i] += force
+			if not math.isfinite(f_mag):
+				continue  # extra protection
+
+			fx = f_mag * dx
+			fy = f_mag * dy
+			fz = f_mag * dz
+
+			forces[i, 0] += fx
+			forces[i, 1] += fy
+			forces[i, 2] += fz
+			forces[j, 0] -= fx
+			forces[j, 1] -= fy
+			forces[j, 2] -= fz
+
 	return forces
 
+# Lennard-Jones Hamiltonian energy computation
 @njit
-def compute_cluster_energy(cluster_indices, positions, velocities, A, B, C):
-    ke = 0.0
-    for i in range(len(cluster_indices)):
-        idx = cluster_indices[i]
-        v = velocities[idx]
-        ke += 0.5 * (v[0]**2 + v[1]**2 + v[2]**2)
+def compute_lj_hamiltonian(positions: np.ndarray, velocities: np.ndarray, N: int, epsilon: float, sigma: float, BOX_SIZE: float) -> tuple:
+	ke = 0.5 * np.sum(velocities**2)
+	pe = 0.0
 
-    pe = 0.0
-    for i in range(len(cluster_indices)):
-        for j in range(i + 1, len(cluster_indices)):
-            i_idx = cluster_indices[i]
-            j_idx = cluster_indices[j]
-            dx = positions[i_idx][0] - positions[j_idx][0]
-            dy = positions[i_idx][1] - positions[j_idx][1]
-            dz = positions[i_idx][2] - positions[j_idx][2]
-            r = (dx*dx + dy*dy + dz*dz)**0.5
-            pe += A / (r**3) - B * (r**2) + C * r
+	for i in range(N):
+		for j in range(i + 1, N):
+			dx = positions[i][0] - positions[j][0]
+			dy = positions[i][1] - positions[j][1]
+			dz = positions[i][2] - positions[j][2]
 
-    return ke + pe
+			if dx > 0.5 * BOX_SIZE:
+				dx -= BOX_SIZE
+			elif dx < -0.5 * BOX_SIZE:
+				dx += BOX_SIZE
+
+			if dy > 0.5 * BOX_SIZE:
+				dy -= BOX_SIZE
+			elif dy < -0.5 * BOX_SIZE:
+				dy += BOX_SIZE
+
+			if dz > 0.5 * BOX_SIZE:
+				dz -= BOX_SIZE
+			elif dz < -0.5 * BOX_SIZE:
+				dz += BOX_SIZE
+
+			r2 = dx*dx + dy*dy + dz*dz
+			if r2 < 1e-4:
+				continue
+
+			inv_r2 = 1.0 / r2
+			inv_r6 = (sigma * sigma * inv_r2) ** 3
+			inv_r12 = inv_r6 * inv_r6
+
+			pe += 4 * epsilon * (inv_r12 - inv_r6)
+
+	return ke, pe, ke + pe
+
+@njit
+def compute_cluster_energy(cluster_indices, positions, velocities, epsilon, sigma, BOX_SIZE):
+	ke = 0.0
+	for i in range(len(cluster_indices)):
+		idx = cluster_indices[i]
+		v = velocities[idx]
+		ke += 0.5 * (v[0]**2 + v[1]**2 + v[2]**2)
+
+	pe = 0.0
+	for i in range(len(cluster_indices)):
+		for j in range(i + 1, len(cluster_indices)):
+			i_idx = cluster_indices[i]
+			j_idx = cluster_indices[j]
+
+			dx = positions[i_idx][0] - positions[j_idx][0]
+			dy = positions[i_idx][1] - positions[j_idx][1]
+			dz = positions[i_idx][2] - positions[j_idx][2]
+
+			# PBC wrap
+			if dx > 0.5 * BOX_SIZE:
+				dx -= BOX_SIZE
+			elif dx < -0.5 * BOX_SIZE:
+				dx += BOX_SIZE
+			if dy > 0.5 * BOX_SIZE:
+				dy -= BOX_SIZE
+			elif dy < -0.5 * BOX_SIZE:
+				dy += BOX_SIZE
+			if dz > 0.5 * BOX_SIZE:
+				dz -= BOX_SIZE
+			elif dz < -0.5 * BOX_SIZE:
+				dz += BOX_SIZE
+
+			r2 = dx*dx + dy*dy + dz*dz
+			if r2 < 1e-4:
+				continue  # avoid singularity
+
+			inv_r2 = 1.0 / r2
+			inv_r6 = (sigma * sigma * inv_r2) ** 3
+			inv_r12 = inv_r6 * inv_r6
+
+			pe += 4 * epsilon * (inv_r12 - inv_r6)
+
+	return ke + pe
+
 
 def color_to_charge(color):
 	return {0: +1, 1: 0, 2: -1}[color]
@@ -304,7 +384,8 @@ def cluster_charge(cluster_indices, colors):
 def write_summary_row(
 	logdir, frame, ke, stable_count, unstable_count,
 	just_born, just_died, spin_flips, color_flips,
-	cluster_radius_stats, min_dist, max_dist, mean_dist
+	cluster_radius_stats, min_dist, max_dist, mean_dist,
+	ke_loss, clusters_damped, particles_damped
 ):
 	summary_path = os.path.join(logdir, "summary.csv")
 	file_exists = os.path.isfile(summary_path)
@@ -318,7 +399,8 @@ def write_summary_row(
 				"NewBorn", "Dissolved",
 				"SpinFlips", "ColorFlips",
 				"AvgClusterSize", "MinClusterSize", "MaxClusterSize",
-				"MinDistance", "MaxDistance", "MeanDistance"
+				"MinDistance", "MaxDistance", "MeanDistance",
+				"KELossRadiative", "ClustersDamped", "ParticlesDamped"
 			])
 		writer.writerow([
 			frame, f"{ke:.5f}",
@@ -328,7 +410,8 @@ def write_summary_row(
 			round(np.mean(cluster_radius_stats), 2),
 			min(cluster_radius_stats),
 			max(cluster_radius_stats),
-			round(min_dist, 5), round(max_dist, 5), round(mean_dist, 5)
+			round(min_dist, 5), round(max_dist, 5), round(mean_dist, 5),
+			round(ke_loss, 5), clusters_damped, particles_damped
 		])
 
 def write_lifetime_histogram_row(logdir, frame, lifetime_bins):
@@ -465,8 +548,10 @@ def write_cluster_lifetimes(logdir, cluster_lifetimes):
 ######################## Logging functions for writing to CSV files. ########################
 
 def update(frame):
-	global previous_proton_ids
-
+	global previous_proton_ids, start_time
+	
+	frame_start = time.time()
+	
 	ke = quantum.update()
 
 	radius = 0.1 * PLANCK_LENGTH
@@ -486,7 +571,7 @@ def update(frame):
 	unknown_particle_log = []  # New: catch-all for non-proton-like clusters
 	quantum.unstable_clusters.clear()
 
-	for i in range(N):
+	for i in range(quantum.N):
 		cluster = tree.query_ball_point(quantum.positions[i], radius)
 		cluster = [j for j in cluster if j != i]  # NOW back in
 		cluster_radius_stats.append(len(cluster))
@@ -501,7 +586,7 @@ def update(frame):
 		cluster_size = len(full_cluster)
 		quantum.current_clusters_by_size[cluster_size].add(cluster_id)
 
-		if cluster_id not in quantum.previous_clusters_by_size[cluster_size]:
+		if cluster_id not in quantum.previous_clusters_by_size.get(cluster_size, set()):
 			#print(f"[DEBUG] Frame {frame}: registering birth for cluster {cluster_id} (size {cluster_size})")
 			quantum.cluster_birth_frames[cluster_size][cluster_id] = quantum.frame
 		
@@ -510,7 +595,7 @@ def update(frame):
 
 		# Optionally: track cluster ID by size for future analysis
 		clusters_by_size.setdefault(cluster_size, []).append(full_cluster)
-
+		
 		# You can still filter 3-spheres for proton/superproton rules below
 		if cluster_size == 3:
 			spins = quantum.spins[full_cluster]
@@ -528,9 +613,13 @@ def update(frame):
 						full_cluster,
 						quantum.positions,
 						quantum.velocities,
-						quantum.A, quantum.B, quantum.C
+						quantum.epsilon,
+						quantum.sigma,
+						quantum.BOX_SIZE
 					)
-
+					
+					binding_energy = cluster_energy - sum(0.5 * np.sum(quantum.velocities[i]**2) for i in full_cluster)
+					
 					if quantum.verbose or HEADLESS:
 						print(f"Frame {frame}: Proton Cluster {full_cluster} → Net Charge: {charge} | Binding Energy: {cluster_energy:.5f}")
 
@@ -562,7 +651,39 @@ def update(frame):
 		else:
 			reason = f"size_{cluster_size}"
 			unknown_particle_log.append((frame, cluster_id, reason))
+	
+	frame_ke_loss = 0.0  # RESET just before applying damping!
+	clusters_damped = 0
+	particles_damped = 0
 
+	for size, clusters in clusters_by_size.items():
+		if size >= 3:
+			for cluster in clusters:
+				cluster_id = frozenset(cluster)
+
+				birth_frame = quantum.cluster_birth_frames[size].get(cluster_id, None)
+				if birth_frame is None:
+					continue  # unknown cluster
+
+				lifetime = frame - birth_frame
+				if lifetime < 3:
+					continue  # too young to safely dampen
+
+				# Stronger damp based on size
+				base_damp = 0.998
+				extra = min(0.001 * (size - 3), 0.010)
+				damp_factor = base_damp - extra
+
+				# ✅ Log damped cluster and particle count
+				clusters_damped += 1
+				particles_damped += len(cluster)
+
+				for idx in cluster:
+					v_before = quantum.velocities[idx].copy()
+					quantum.velocities[idx] *= damp_factor
+					v_after = quantum.velocities[idx]
+					frame_ke_loss += 0.5 * (np.dot(v_before, v_before) - np.dot(v_after, v_after))
+	
 	if quantum.verbose or HEADLESS:
 		print(f"Min: {min(cluster_radius_stats)}, Max: {max(cluster_radius_stats)}, Avg: {np.mean(cluster_radius_stats):.2f}")
 	# Log counts
@@ -624,7 +745,7 @@ def update(frame):
 		if quantum.last_spin_flips > 0 or quantum.last_color_flip > 0:
 			print(f"Spin Flips: {quantum.last_spin_flips} | Color Flip: {quantum.last_color_flip}")
 
-		cluster_sizes = Counter(len(tree.query_ball_point(quantum.positions[i], 2.2 * PLANCK_LENGTH)) for i in range(N))
+		cluster_sizes = Counter(len(tree.query_ball_point(quantum.positions[i], 2.2 * PLANCK_LENGTH)) for i in range(quantum.N))
 		print(f"Cluster sizes: {dict(cluster_sizes)}")
 
 		# Optionally show detailed changes
@@ -651,12 +772,15 @@ def update(frame):
 		just_born, just_died,
 		quantum.last_spin_flips, quantum.last_color_flip,
 		cluster_radius_stats,
-		np.min(distances), np.max(distances), np.mean(distances)
+		np.min(distances), np.max(distances), np.mean(distances),
+		frame_ke_loss, clusters_damped, particles_damped
 	)
 	
-	ke, pe, h_total = compute_hamiltonian_energy(
-		quantum.positions, quantum.velocities, N,
-		A=0.005, B=0.002, C=0.001
+	ke, pe, h_total = compute_lj_hamiltonian(
+		quantum.positions, quantum.velocities, quantum.N,
+		epsilon=quantum.epsilon,
+		sigma=quantum.sigma,
+		BOX_SIZE=quantum.BOX_SIZE
 	)
 	
 	write_quantum_log_row(
@@ -667,6 +791,9 @@ def update(frame):
 		quantum.DT,
 		ke, pe, h_total
 	)
+	
+	if quantum.verbose or HEADLESS:
+		print(f"Frame {frame}: KE Lost via Radiative Damping = {frame_ke_loss:.5f}")
 	
 	if frame > 0 and frame % 100 == 0:
 		write_unstable_particles(quantum.log_dir, unstable_log_data)
@@ -714,7 +841,7 @@ def update(frame):
 		#print(f"[DEBUG] Total lifetimes recorded: {total_lifetimes}")
 
 		write_cluster_lifetimes(quantum.log_dir, quantum.cluster_lifetimes)
-		#print("Simulation complete. Closing animation.")
+		print("Simulation complete. Closing animation.")
 		if not HEADLESS:
 			plt.close()  # This will close the window when the last frame is rendered
 	else:
@@ -724,6 +851,21 @@ def update(frame):
 			for size, clusters in quantum.current_clusters_by_size.items()
 		}
 		quantum.current_clusters_by_size = defaultdict(set)
+	
+	frame_end = time.time()
+	frame_duration = frame_end - frame_start
+
+	elapsed_total = frame_end - start_time
+	remaining_frames = MAX_FRAMES - frame
+	est_remaining_time = frame_duration * remaining_frames
+	est_total_time = elapsed_total + est_remaining_time
+	
+	real = frame + 1
+	if real % 100 == 0:  # or % 100 to reduce spam
+		print(f"[Frame {frame}] Time/frame: {frame_duration:.3f}s | "
+			  f"Elapsed: {elapsed_total/60:.1f} min | "
+			  f"ETA: {est_remaining_time/60:.1f} min | "
+			  f"Est Total: {est_total_time/60:.1f} min")
 	
 	return (scatter,) if not HEADLESS else None
 
