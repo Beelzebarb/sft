@@ -144,7 +144,8 @@ No manual patching or system-specific modifications required.
 
 Each run generates a full log folder containing:
 - `summary.csv` — per-frame energy, cluster, and spatial statistics
-- `proton_lifetimes_by_frame.csv` — histogram of proton lifetimes over time
+- `cluster_lifetimes_size_x.csv` - Tracks cluster lifetimes by size x is replaced with cluster size, each gets its own csv for automation.
+- `proton_binding_energy.csv` - per frame Proton Binding Energy statistics.
 - `quantum_logs.csv` — per-frame quantum activity: spin flips, color flips, timestep, and Hamiltonian diagnostics
 - `metadata.json` — config snapshot for full reproducibility
 
@@ -154,16 +155,7 @@ These results have been validated across a range of particle counts (`N=180` to 
 
 ## 📂 Batch Results
 
-Benchmark runs (`N=180` through `N=3000`) are stored under `/results`, each with logs and metadata for reproducibility:
-
-```
-results/
-├── N180/
-├── N250/
-├── N500/
-├── ...
-└── N3000/
-```
+Benchmark runs will soon be found under the folder results_v2, once i get them uploaded.
 
 ---
 
@@ -173,14 +165,23 @@ Adjust settings either in `sft-cpu.py` before running or via `metadata.json`. Ke
 
 ```json
 {
-  "N": 1000,
-  "planck_length": 5.0,
-  "binding_energy": 800.0,
-  "pauli_strength": 0.25,
-  "initial_dt": 0.001,
-  "max_frames": 5000,
-  "use_gravity": true,
-  "enable_color_flips": true
+	"N": 2000,
+	"D": 0.3,
+	"r0": 0.3,
+	"alpha": 3.0,
+	"dcp_k": 0.001,
+	"dcp_cutoff": 0.2,
+	"use_seed": true,
+	"seed_value": 42,
+	"planck_length": 5.0,
+	"initial_dt": 0.001,
+	"max_frames": 50000,
+	"use_gravity": true,
+	"enable_color_flips": true,
+	"cold_start": true,
+	"fast": false,
+	"cluster_energy_input": "np_array_int32",
+	"reflected_list_mode": false,
 }
 ```
 
@@ -213,6 +214,9 @@ A testbed for **Spherical Field Theory** (SFT), a novel idea that quantum behavi
 
 ## 🙏 Acknowledgements
 
+
+**Paul Dirac** - Discovered antimatter and the Dirac equation, his work on locality inspired me to build this. I named Dirac Core Pressure after him, which is a custom short-range exclusion force.
+**Philip M. Morse** - Inventor of the Morse Potential which is used along the Dirac Core Pressure to stabilize the quantum universe. Without it, this would never work.
 Built with guidance from ChatGPT-4 and fueled by curiosity, persistence, and a deep love for physics.
 
 ---
