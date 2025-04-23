@@ -44,24 +44,24 @@ They emerge from the model itself — from locality, force, and motion alone.
 
 The custom potential energy function combines attractive and repulsive terms through a Morse-like interaction with short-range Dirac Core Pressure:
 
-	```V(r) = D * (1 - exp(-α * (r - r₀)))² - k / r   (if r < cutoff)```
+	V(r) = D * (1 - exp(-α * (r - r₀)))² - k / r   (if r < cutoff)
 
 The force derived from this potential (negative gradient of V) is split into two terms:
 
-	```F_total = (F_morse + F_dcp) * (xᵢ - xⱼ) / |xᵢ - xⱼ|```
+	F_total = (F_morse + F_dcp) * (xᵢ - xⱼ) / |xᵢ - xⱼ|
 Where:
 
-		```F_morse = -2 * D * α * (1 - e^(-α * (r - r₀))) * e^(-α * (r - r₀))```
+		F_morse = -2 * D * α * (1 - e^(-α * (r - r₀))) * e^(-α * (r - r₀))
 
-		```F_dcp = k / r² (only active if r < cutoff)```
+		F_dcp = k / r² (only active if r < cutoff)
 
 The adaptive timestep DT is dynamically calculated every frame using local velocity and force magnitudes:
 
-	```DT = 0.001 * min(1.0, 0.1 / max_force, 0.1 / max_velocity)```
+	DT = 0.001 * min(1.0, 0.1 / max_force, 0.1 / max_velocity)
 
 Then smoothed:
 	
-	```self.DT = 0.9 * self.DT + 0.1 * DT_dynamic```
+	self.DT = 0.9 * self.DT + 0.1 * DT_dynamic
 
 ---
 
