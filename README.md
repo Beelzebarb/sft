@@ -6,7 +6,7 @@ The idea for this theory came from the brilliance of Paul Dirac's work, and his 
 
 This project has had a lot of ups and downs, I thought it was dead when I couldn't get the system to function without scaffolding holding it up in the code, that it was dead, but that has been resolved.
 
-It now maintains stability through 100,000 frames deterministic across Linux and Windows aas well as Desktop and Rackmount Server hardware still, but the force equations have been completely redone.
+It now maintains stability through 100,000 frames deterministic across Linux and Windows as well as Desktop and Rackmount Server hardware still, but the force equations have been completely redone.
 
 The entire theory now operates on a custom usage of the Morse potential and a new implementation named Dirac Core Pressure, which acts as a short-range quantum exclusion force.
 
