@@ -36,7 +36,7 @@ Also, Philip M. Morse, who developed the Morse potential now used in this theory
 	- Only happen under deterministic runs, using --fast which enables parallel calculations, storms do not occur.
 
 These behaviors are not programmed.
-They emerge from the model itself — from locality, force, and motion alone.
+They emerge from the model itself, from locality, force, and motion alone.
 
 ---
 
