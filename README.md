@@ -25,7 +25,7 @@ Also, Philip M. Morse, who developed the Morse potential now used in this theory
   - The result is a feedback loop: clustering increases energy density, which increases gravitational pull, which in turn amplifies clustering.
 - **Relativisitc Behavior from First Principles**
   - The system respects a speed limit that was never defined in the code or equations.
-  - It exhibits mass-energy conversion, local time dilation (via adaptive timestep), and resistance to acceleration — all purely from geometric interaction.
+  - It exhibits mass-energy conversion, local time dilation (via adaptive timestep), and resistance to acceleration, all purely from geometric interaction.
 - **Emergent Decoherence Storms ("Spin Storms")**
   - The system builds tension over time. When local density and force exceed a threshold, the field enters a state of quantum instability:
   - a rapid, storm-like burst of spin flips occurs.
