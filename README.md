@@ -74,7 +74,7 @@ Then smoothed:
 - **Scalable**: Verified up to `N=3000` particles, cross-platform stable.
 - **Headless mode**: Run high-N simulations without graphical overhead.
 - **Logging**: Summary, quantum events per frame, proton binding energy per frame, cluster lifetimes by size.
-- **Replayable**: Supply `metadata.json` from a previous run to recreate identical behavior.
+- **Replayable**: Supply `/path/to/logs` from a previous run to recreate identical behavior.
 
 ---
 
