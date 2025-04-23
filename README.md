@@ -105,7 +105,7 @@ python sft-cpu.py
 ### Headless mode with metadata replay:
 
 ```bash
-python sft-cpu.py --config logs/run_YYYYMMDD_HHMMSS/metadata.json --headless
+python sft-cpu.py --config "logs/run_YYYYMMDD_HHMMSS" --headless
 ```
 
 ---
