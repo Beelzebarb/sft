@@ -1,3 +1,34 @@
+"""
+Spherical Field Theory (SFT) Quantum Simulator
+
+Author: Brian Sykes
+Version: 1.0.0
+Released: 2025-04-23
+Description:
+    Version 1.0 baseline release of the SFT simulation engine.
+    Implements deterministic 3D quantum particle modeling using discrete interacting spheres.
+    Includes support for spin, color, exclusion, gravity, damping, and cluster tracking.
+
+    This version establishes the reproducible simulation core for all future comparative studies.
+    All outputs are bound to this exact source hash; any code changes invalidate prior confirmations.
+
+Usage:
+    python sft-cpu.py [--fast] [--verbose] [--headless] [--config "path/to/logs"] [--outdir "/path/to/log/output"] [--N "2000"] [--frames "500000"] [--boxsize "6.0"]
+
+GitHub:
+    https://github.com/Beelzebarb/sft
+
+License:
+    MIT License
+"""
+
+__author__ = "Brian Sykes"
+__version__ = "1.0.0"
+__license__ = "MIT"
+__status__ = "Stable"
+
+### ────────────────────────────── Imports ─────────────────────────────── ###
+
 from numba import njit, prange
 from datetime import datetime
 from collections import defaultdict
@@ -8,64 +39,134 @@ from matplotlib.animation import FuncAnimation
 from scipy.spatial import cKDTree, distance
 from scipy.spatial.distance import pdist
 from collections import Counter
-import os, json, csv, time, math
+from itertools import combinations
+import os, json, csv, time, math, sys, hashlib, platform, multiprocessing
 
-# Quantum Physics Parameters
-L_unit = 0.12              	# PLANCK_LENGTH (used for scaling forces/distances?)
-E_unit = 800.0             	# BINDING_ENERGY (used for normalization / maybe force constants)
-PLANCK_LENGTH = 5.0        	# Actual working interaction scale
-PAULI_STRENGTH = 0.25      	# Effective Pauli repulsion factor
+### ────────────────────────────── Imports ─────────────────────────────── ###
 
-# Simulation Parameters
-MAX_FRAMES = 5000			# Maximum Frames to run
-BOX_SIZE = 6.0				# Size of box/cube
-HEADLESS = False			# Headless mode toggle
-
-#Global proton state trackers
-proton_lifetimes = {}
-previous_proton_ids = set()
-start_time = time.time()
+### ──────────────────────── QuantumUniverse Class ─────────────────────── ###
 
 class QuantumUniverse:
-	def __init__(self, config_path=None, output_dir=None, verbose=False):
-		# Defaults
-		self.use_gravity = True
-		self.enable_color_flips = False
-		self.DT = 0.001
-		self.frame = 0
-		self.verbose = verbose
-		self.BOX_SIZE = BOX_SIZE
-		
-		self.A = 1.0
-		self.B = +0.01
-		self.C = +0.005
-		
-		self.epsilon = 1.0    # Depth of potential well (how strong binding is)
-		self.sigma = 1.0      # Preferred separation distance
+	def __init__(self, config_path=None, output_dir=None, verbose=False, fast=False, override_N=2000, override_frames=50000, override_box_size=None, headless=False):
+		"""
+		Initialize a new simulation instance of the Spherical Field Theory universe.
 
-		global PLANCK_LENGTH, E_unit, PAULI_STRENGTH, MAX_FRAMES
-		
-		#Default frames, will change with loaded config automatically.#
-		N = 500
+		This constructor configures all physical constants, initializes particle
+		arrays and quantum states, handles deterministic seeding, sets up the
+		simulation domain with periodic boundary conditions, and prepares the output
+		directory and metadata for logging and post-analysis.
 
+		It loads optional configuration overrides from a JSON metadata file, and
+		ensures reproducibility for safe (non-parallel) deterministic runs.
+
+		Key features initialized:
+		- Particle positions, velocities, spins, and colors
+		- Cluster tracking systems for protons, superprotons, and general clusters
+		- Simulation constants: Morse potential, DCP repulsion, Planck length, etc.
+		- Runtime flags: headless, fast mode, cold start, quantum color flips
+		- Log directory creation and metadata output
+		- Sanity checks for grid generation, particle count, and layout validity
+
+		Parameters:
+			config_path (str or None): Optional path to a metadata JSON file for overrides
+			output_dir (str or None): Optional path to store simulation logs and metadata
+			verbose (bool): If True, enables terminal output (frame-level logs, debug)
+			fast (bool): If True, enables non-deterministic multithreaded mode (Numba parallel)
+
+		Raises:
+			ValueError: If N is too large for the available 3D grid spacing
+		"""
+		
+		#Simulation state
+		self.N = override_N					# Set N internally.
+		self.frames = override_frames		# Set max frames.
+		self.scatter = None					# GUI plot definition
+		self.frame = 0						# Frame counter.
+		self.ke = 1.0						# Kinetic Energy (normalized units) per frame.
+		self.DT = 0.001						# Default DT, to be used in calculation with dynamic velocities in a local configuration.
+		self.frame_force_magnitude = 0.0	# Mean force magnitude applied this frame
+		
+		#Config toggles
+		self.verbose = verbose				# Toggles terminal spam/debug mode.
+		self.fast = fast					# Parallel/multithreaded toggle, enabling this sets the simulation into non-deterministic mode.
+		self.cold_start = True				# No initial movement of particles, allow interactions to start reactions.
+		self.use_gravity = True				# Toggles scaling gravity effect
+		self.enable_color_flips = True		# Toggles quantum-like flucuations (color flips)
+		self.use_seed = True 				# Single threaded deterministic mode, disable for parallel as default, parallel is non-deterministic.
+		self.seed_value = 42				# Default seed value, allows deterministic bit-for-bit results.
+		self.headless = headless			# Toggles whether to run GUI or not, matplotlib GUI is default, --headless is required for no GUI.
+		
+		#Spatial Structure
+		self.BOX_SIZE = override_box_size if override_box_size is not None else 6.0		# Size of Toroidal box, default is 6.0.
+		
+		#Interaction constants
+		self.planck_length = 5.0			# Actual working interaction scale
+		self.D = 0.3         				# Morse well depth
+		self.alpha = 3.0     				# Morse sharpness
+		self.r0 = 0.3        				# Morse equilibrium distance
+		self.dcp_k = 0.001 					# Dirac Core Pressure - Custom short-range quantum exclusion force - Set to soft repulsion.
+		self.dcp_cutoff = 0.2  				# Only repels at very close range
+		
+		#Runtime utility
+		self.live_stats = {}  				# Populated per frame for zstd + msg output.
+		
+		# Generate source code hash for confirmation.
+		source_hash = hash_self()
+		
 		# Load overrides from metadata.json if provided
 		if config_path:
-			with open(config_path, 'r') as f:
+			md = os.path.join(config_path, "metadata.json")
+			if not os.path.exists(md):
+				print(f"[ERROR] metadata.json not found in: {config_path}")
+				print("Hint: Did you provide the path to the metadata.json file and not the directory itself?")
+				sys.exit(1)
+			with open(md , 'r') as f:
 				config = json.load(f)
-			N = config.get("N", N)
-			PLANCK_LENGTH = config.get("planck_length", PLANCK_LENGTH)
-			E_unit = config.get("binding_energy", E_unit)
-			PAULI_STRENGTH = config.get("pauli_strength", PAULI_STRENGTH)
+			self.N = config.get("N", self.N)
+			self.D = config.get("D", self.D)
+			self.r0 = config.get("r0", self.r0)
+			self.alpha = config.get("alpha", self.alpha)
+			self.dcp_k = config.get("dcp_k", self.dcp_k)
+			self.dcp_cutoff = config.get("dcp_cutoff", self.dcp_cutoff)
+			self.use_seed = config.get("use_seed", self.use_seed)
+			self.seed_value = config.get("seed_value", self.seed_value)
+			self.planck_length = config.get("planck_length", self.planck_length)
+			self.BOX_SIZE = config.get("box_size", self.BOX_SIZE)
 			self.DT = config.get("initial_dt", self.DT)
-			MAX_FRAMES = config.get("max_frames", MAX_FRAMES)
+			self.frames = config.get("max_frames", self.frames)
 			self.use_gravity = config.get("use_gravity", self.use_gravity)
 			self.enable_color_flips = config.get("enable_color_flips", self.enable_color_flips)
+			self.cold_start = config.get("cold_start", self.cold_start)
+			self.fast = config.get("fast", self.fast)
+			
+			#Check config source hash against current running source code, if they don't match and --fast is not on, terminate sim.
+			config_source_hash = config.get("source_hash", None)
+			if config_source_hash is not None:
+				if config_source_hash != source_hash and not self.fast:
+					print("Simulation terminated. Source code hash mismatch.")
+					print(f"  Expected: {config_source_hash}")
+					print(f"  Found:    {source_hash}")
+					print("  Hint: Use --fast to override for non-deterministic runs.")
+					sys.exit(1)
+			
+			if not self.fast:
+				verify_run_integrity(config_path)
+		
+		self.start_time = time.time()
+		
+		if self.fast:
+			self.use_seed = False
+		
+		if self.use_seed:
+			np.random.seed(self.seed_value)
 		
 		# For stable proton-like clusters (3-sphere clusters with charge of +1 or superprotons, which are +2.
 		self.stable_proton_clusters = set()
 		self.proton_birth_frames = {}
 		self.proton_death_frames = {}
 		self.proton_charges = {}
+		self.proton_lifetimes = {}
+		self.previous_proton_ids = set()
 		
 		# For non-proton cluster tracking by cluster size
 		self.cluster_birth_frames = defaultdict(dict)     # {size: {cluster_id: frame}}
@@ -89,16 +190,26 @@ class QuantumUniverse:
 		os.makedirs(self.log_dir, exist_ok=True)
 
 		# Initialize particle positions and states
-		grid_spacing = self.sigma * 0.75
+		grid_spacing = self.r0 * 0.75
 		num_per_axis = int(self.BOX_SIZE // grid_spacing)
 		coords = np.linspace(0, self.BOX_SIZE, num=num_per_axis)
 		positions = np.array(np.meshgrid(coords, coords, coords)).T.reshape(-1, 3)
 		np.random.shuffle(positions)
-		self.positions = positions[:N]
-		self.N = self.positions.shape[0]
+		self.positions = positions[:self.N]
+		
+		if positions.shape[0] < self.N:
+			raise ValueError(f"Only generated {positions.shape[0]} particles, but N = {N}")
+		
+		if self.N > len(np.unique(positions, axis=0)):
+			raise ValueError(f"N = {self.N} is too large for the available unique positions: {len(np.unique(positions, axis=0))}")
 
-		#self.velocities = np.random.randn(N, 3) * 0.01
-		self.velocities = np.zeros_like(self.positions)
+		if self.cold_start:
+			self.velocities = np.zeros_like(self.positions)
+		else:
+			self.velocities = np.random.randn(self.N, 3) * 0.01
+		
+		self.velocities += np.random.normal(0, 0.01, size=self.velocities.shape)
+		
 		self.spins = np.random.choice([-1, 1], self.N)
 		self.colors = np.random.randint(0, 2, self.N)
 		self.lifetimes = np.zeros(self.N)
@@ -107,24 +218,67 @@ class QuantumUniverse:
 
 		self.last_spin_flips = 0
 		self.last_color_flip = 0
+		
+		system_info = {
+			"os_name": os.name,
+			"platform": platform.system(),
+			"platform_release": platform.release(),
+			"platform_version": platform.version(),
+			"architecture": platform.machine(),
+			"cpu_count": multiprocessing.cpu_count(),
+			"python_version": platform.python_version()
+		}
+		
+		# Write metadata
+		meta = {
+			"N": self.N,
+			"D": self.D,
+			"r0": self.r0,
+			"alpha": self.alpha,
+			"dcp_k": self.dcp_k,
+			"dcp_cutoff": self.dcp_cutoff,
+			"use_seed": self.use_seed,
+			"seed_value": self.seed_value,
+			"planck_length": self.planck_length,
+			"box_size": self.BOX_SIZE,
+			"initial_dt": self.DT,
+			"max_frames": self.frames,
+			"use_gravity": self.use_gravity,
+			"enable_color_flips": self.enable_color_flips,
+			"cold_start": self.cold_start,
+			"fast": self.fast,
+			"cluster_energy_input": "np_array_int32",
+			"reflected_list_mode": False,
+			"source_hash": source_hash,
+			"system_info": system_info
+		}
+		with open(os.path.join(self.log_dir, "metadata.json"), "w") as f:
+			json.dump(meta, f, indent=4)
 
-		# Write metadata (optional: only if no config was passed)
-		if not config_path:
-			meta = {
-				"N": self.N,
-				"planck_length": PLANCK_LENGTH,
-				"binding_energy": E_unit,
-				"pauli_strength": PAULI_STRENGTH,
-				"initial_dt": self.DT,
-				"max_frames": MAX_FRAMES,
-				"use_gravity": self.use_gravity,
-				"enable_color_flips": self.enable_color_flips
-			}
-			with open(os.path.join(self.log_dir, "metadata.json"), "w") as f:
-				json.dump(meta, f, indent=4)
-
-	# Gravity scaling: Increase gravity effect as spheres compress (based on density or distance)
 	def scale_gravity_effect(self):
+		"""
+		Compute a dynamic scaling factor for gravity based on system density.
+
+		This function calculates a gravity scaling factor that adjusts dynamically
+		based on the system's particle density. It uses the **average pairwise distance** 
+		between particles to determine the system's **density**. As the particles get closer 
+		(i.e., higher density), the gravitational effects become stronger. However, the 
+		scaling factor is capped at a maximum value and smoothed between frames to ensure 
+		stability and avoid extreme fluctuations.
+
+		Gravity scaling behavior:
+		- Inversely proportional to the **square of the average distance** between particles.
+		- **Capped at a maximum value** to prevent runaway gravitational effects at high densities.
+		- **Smoothed over time** to avoid sharp fluctuations or jitter from one frame to the next.
+
+		This method enables gravity to scale naturally with the particle distribution while 
+		maintaining a **stable system**, ensuring that clusters can form and evolve without 
+		causing numerical instability.
+
+		Returns:
+			float: The **smoothed gravitational scaling factor** for the current frame. This factor 
+				   adjusts the gravitational force applied to the system based on the current density.
+		"""
 		avg_distance = np.mean(pdist(self.positions))
 		scaling_factor = 1 / (avg_distance ** 2)  # Gravity effect increases as density increases
 
@@ -141,15 +295,53 @@ class QuantumUniverse:
 		return scaling_factor
 
 	def kinetic_energy(self):
+		"""
+		Compute the total kinetic energy of the system.
+
+		Uses the classical formula:
+			KE = 0.5 * Σ(v²)
+		across all particle velocity vectors in the simulation.
+
+		Returns:
+			float: Total kinetic energy of all particles
+		"""
 		return 0.5 * np.sum(self.velocities ** 2)
 
 	def update(self):
+		"""
+		Advance the Spherical Field Theory simulation by one frame.
+
+		This is the primary per-frame update method that drives all time evolution
+		in the simulation. It performs the following major operations:
+
+		- Ensures particle count integrity
+		- Applies quantum decoherence to spin states (with random lifetime-based flipping)
+		- Performs reproducible color flips if enabled
+		- Computes net force on each particle using either:
+			- Safe (deterministic) Lagrangian force function, or
+			- Fast (parallel, non-deterministic) mode
+		- Scales gravitational influence dynamically based on local density
+		- Applies symplectic integration to update velocities and positions
+		- Performs local, emergent damping when forces and velocities align
+		- Tracks per-frame energy, work, and force/velocity alignment
+		- Dynamically adjusts timestep (`DT`) to remain stable under changing system state.
+		- Accounts for force and velocity before and after DT calculation. Time is Relative.
+		- Wraps positions using toroidal boundary conditions
+		- Updates simulation frame count and total kinetic energy
+
+		This function is the central simulation loop, called once per animation or
+		data frame, and is responsible for real-time physics integration of all 
+		particles in the quantum field.
+
+		Returns:
+			float: Total kinetic energy after the update (for logging or visualization)
+		"""
 		assert self.positions.shape[0] == self.N, f"[CRITICAL] N mismatch: positions has {self.positions.shape[0]}, but N = {self.N}"
 		
-		
+		ke_factor = min(self.ke, 1.0)
 		self.lifetimes += self.DT
-		#decohere = self.lifetimes > 0.3 + np.random.rand(N) * 0.2 - allows for spin flips, removed to debug energy accumulation issues.
-		decohere = np.zeros(self.N, dtype=bool)
+		decohere = self.lifetimes > 0.3 + np.random.rand(self.N) * 0.2 
+		#decohere = np.zeros(self.N, dtype=bool)
 		self.last_spin_flips = np.count_nonzero(decohere)
 		self.spins[decohere] *= -1
 		self.lifetimes[decohere] = 0
@@ -158,24 +350,45 @@ class QuantumUniverse:
 		self.last_color_flip = 0  # reset every frame
 
 		if self.enable_color_flips:
-			color_flip_chance = 0.002  # adjustable!
-			flip_mask = np.random.rand(N) < color_flip_chance
+			np.random.seed(self.seed_value + self.frame)  # <-- REPRODUCIBLE flips
+			color_flip_chance = 0.002
+			flip_mask = np.random.rand(self.N) < color_flip_chance
 			prev_colors = self.colors.copy()
 			self.colors[flip_mask] = 1 - self.colors[flip_mask]
 			self.last_color_flip = np.count_nonzero(prev_colors != self.colors)
 		
-		forces = compute_lj_forces(
-			self.positions, self.N,
-			epsilon=self.epsilon,
-			sigma=self.sigma,
-			BOX_SIZE=self.BOX_SIZE,
-			PLANCK_LENGTH=PLANCK_LENGTH
-		)
+		if self.fast:
+			forces = compute_effective_lagrangian_forces_fast_dcp(
+				self.positions,
+				self.N,
+				self.D,
+				self.alpha,
+				self.r0,
+				self.dcp_k,
+				self.dcp_cutoff,
+				self.BOX_SIZE
+			)
+		else:
+			forces = compute_effective_lagrangian_forces_safe_dcp(
+				self.positions,
+				self.N,
+				self.D,
+				self.alpha,
+				self.r0,
+				self.dcp_k,
+				self.dcp_cutoff,
+				self.BOX_SIZE
+			)
+
 		
-		print("Forces shape:", forces.shape)
-		if not np.all(np.isfinite(forces)):
-			print("[ERROR] Force array contains NaN or inf!")
-			exit(1)
+		if hasattr(self, "frame_force_magnitude"):
+			quantum.frame_force_magnitude = np.mean(np.linalg.norm(forces, axis=1))
+		
+		#print("Forces shape:", forces.shape)
+		if self.verbose or quantum.headless:
+			if not np.all(np.isfinite(forces)):
+				print("[ERROR] Force array contains NaN or inf!")
+				exit(1)
 		
 		# Apply gravity scaling (more gradual change during proton events)
 		scaling_factor = self.scale_gravity_effect()
@@ -186,8 +399,6 @@ class QuantumUniverse:
 		max_force = 50.0
 		too_high_force = force_mags > max_force
 		forces[too_high_force] *= (max_force / force_mags[too_high_force])[:, None]
-		
-		#print(f"Mean velocity: {np.linalg.norm(self.velocities, axis=1).mean():.5f}")
 		
 		# Adaptive DT calculation
 		force_scale = np.max(np.linalg.norm(forces, axis=1)) + 1e-8
@@ -205,47 +416,110 @@ class QuantumUniverse:
 		too_fast = velocity_mags > max_velocity
 		self.velocities[too_fast] *= (max_velocity / velocity_mags[too_fast])[:, None]
 
-		# Apply a smaller overall damping factor to prevent runaway energy
-		#self.velocities *= 0.999  # Less aggressive damping - commented out, possible stacking dampening happening from this and apply_energy_dissipation().
-		
-		#print(f"Mean velocity: {np.linalg.norm(self.velocities, axis=1).mean():.5f}")
+		frame_work = 0.0
+		cos_sum = 0.0
+		count = 0
 		
 		# Local emergent damping (force-responsive)
-		#for i in range(self.positions.shape[0]):
-		#	force = forces[i]
-		#	velocity = self.velocities[i]
-		#
-		#	force_magnitude = np.linalg.norm(force)
-		#	if force_magnitude > 0:
-		#		# Apply damping based on local force magnitude
-		#		damping_strength = 0.002  # You can tune this lower or higher
-		#		damping_force = -velocity * force_magnitude * damping_strength
-		#		self.velocities[i] += damping_force * self.DT
-
+		for i in range(self.positions.shape[0]):
+			force = forces[i]
+			velocity = self.velocities[i]
+			
+			force_mag = np.linalg.norm(force)
+			vel_mag = np.linalg.norm(velocity)
+			
+			if force_mag > 0 and vel_mag > 0:
+				cos_theta = np.dot(force, velocity) / (force_mag * vel_mag)
+				cos_sum += cos_theta
+				count += 1
+			
+			dot = np.dot(force, velocity)
+			if dot > 0:
+				unit_force = force / (force_mag + 1e-10)
+				aligned_component = np.dot(velocity, unit_force)
+				
+				# Only damp the aligned part of velocity
+				if cos_theta > 0.9:  # Only when strongly aligned
+					force_damp = (cos_theta - 0.9) * 0.01  # Scale how aligned it is
+					self.velocities[i] *= 1.0 - force_damp * self.DT
+		
+			frame_work += force[0] * velocity[0] + force[1] * velocity[1] + force[2] * velocity[2]
+		
+		self.frame_avg_force_velocity_cos = cos_sum / max(count, 1)
+		
+		self.frame_force_work = frame_work
+		
 		self.positions += self.velocities * self.DT
-		self.positions %= BOX_SIZE
+		self.positions %= self.BOX_SIZE
 		
 		self.frame += 1
 		
-		return self.kinetic_energy()
+		self.ke = self.kinetic_energy()
+		
+		return self.ke
 
-# Initialize quantum universe
-quantum  = QuantumUniverse()
+### ──────────────────────── QuantumUniverse Class ─────────────────────── ###
 
-# Lennard-Jones pairwise force calculation with periodic boundaries and cutoff
-@njit(parallel=True)
-def compute_lj_forces(positions, N, epsilon, sigma, BOX_SIZE, PLANCK_LENGTH):
-	forces = np.zeros_like(positions)
-	cutoff_radius_squared = (2.5 * PLANCK_LENGTH) ** 2
-	min_r2 = 1e-4  # Prevent r2 from being too small
+### ──────────────────────── Computational Functions ───────────────────── ###
 
+@njit(parallel=True, fastmath=True)
+def compute_hamiltonian_energy_fast_dcp(
+	positions: np.ndarray,
+	velocities: np.ndarray,
+	N: int,
+	D: float,
+	alpha: float,
+	r0: float,
+	dcp_k: float,
+	dcp_cutoff: float,
+	BOX_SIZE: float
+):
+	"""
+	Compute the total Hamiltonian energy (KE + PE) of the full system.
+
+	This function calculates:
+	- Total kinetic energy from per-particle velocities
+	- Total potential energy using pairwise Morse + DCP (repulsive) interactions
+	- Applies toroidal (periodic) boundary conditions for space wrapping
+
+	The Morse potential captures quantum attraction:
+		PE_morse = D * (1 - exp(-alpha * (r - r0)))^2
+
+	While the Dirac Core Pressure (DCP) term introduces a soft repulsion:
+		PE_dcp = -dcp_k / r (if r < dcp_cutoff)
+
+	This function is used for energy tracking, stability validation, and 
+	Hamiltonian analysis at every frame.
+
+	Parameters:
+		positions (np.ndarray): Nx3 array of particle positions
+		velocities (np.ndarray): Nx3 array of particle velocities
+		N (int): Number of particles in the system
+		D (float): Morse well depth (attraction strength)
+		alpha (float): Morse sharpness (controls steepness)
+		r0 (float): Morse equilibrium distance
+		dcp_k (float): Dirac repulsion constant
+		dcp_cutoff (float): Distance cutoff for DCP interaction
+		BOX_SIZE (float): Length of the toroidal simulation cube
+
+	Returns:
+		tuple:
+			- ke (float): Total kinetic energy
+			- pe (float): Total potential energy
+			- h_total (float): Hamiltonian = KE + PE
+	"""
+	ke = 0.0
+	for i in prange(N):
+		ke += 0.5 * np.dot(velocities[i], velocities[i])
+
+	pe = 0.0
 	for i in prange(N):
 		for j in range(i + 1, N):
 			dx = positions[i][0] - positions[j][0]
 			dy = positions[i][1] - positions[j][1]
 			dz = positions[i][2] - positions[j][2]
 
-			# Periodic boundary correction
+			# Toroidal wrapping
 			if dx > 0.5 * BOX_SIZE:
 				dx -= BOX_SIZE
 			elif dx < -0.5 * BOX_SIZE:
@@ -259,77 +533,349 @@ def compute_lj_forces(positions, N, epsilon, sigma, BOX_SIZE, PLANCK_LENGTH):
 			elif dz < -0.5 * BOX_SIZE:
 				dz += BOX_SIZE
 
-			r2 = dx*dx + dy*dy + dz*dz
-			if r2 < min_r2 or r2 > cutoff_radius_squared:
+			r = math.sqrt(dx * dx + dy * dy + dz * dz)
+			r = max(r, 1e-5)  # Prevent zero distance
+			delta = r - r0
+			exp_input = min(alpha * delta, 50.0)
+			exp_term = math.exp(-exp_input)
+			morse = D * (1 - exp_term) ** 2
+			pe += morse
+
+			# Repulsive potential term
+			if r < dcp_cutoff:
+				pe += -dcp_k / r
+
+	return ke, pe, ke + pe
+
+@njit(parallel=True, fastmath=True)
+def compute_effective_lagrangian_forces_fast_dcp(
+	positions: np.ndarray,
+	N: int,
+	D: float,         # Morse depth
+	alpha: float,     # Morse sharpness
+	r0: float,        # Morse equilibrium distance
+	dcp_k: float,   # Repulsive force constant
+	dcp_cutoff: float,  # Repulsive force cutoff distance
+	BOX_SIZE: float
+) -> np.ndarray:
+	"""
+	Compute the net classical forces on all particles using a local Lagrangian model.
+
+	This function calculates the per-particle net force from pairwise interactions
+	using a combination of:
+
+	- Morse potential (attractive):  
+	  F_morse = -2 * D * alpha * (1 - exp(-alpha(r - r0))) * exp(-alpha(r - r0))
+
+	- Dirac Core Pressure (repulsive):  
+	  F_dcp = dcp_k / r^2  (only applied within cutoff)
+
+	Forces are symmetrically applied to both particles (Newton’s 3rd Law), and
+	toroidal (periodic) boundary conditions are enforced for spatial wrapping.
+
+	This is the core per-frame force model that governs all local interactions in
+	the Spherical Field Theory simulation.
+
+	Parameters:
+		positions (np.ndarray): Nx3 array of particle positions
+		N (int): Number of particles
+		D (float): Morse potential well depth
+		alpha (float): Morse sharpness parameter
+		r0 (float): Morse equilibrium distance
+		dcp_k (float): Dirac-like repulsive force strength
+		dcp_cutoff (float): Cutoff distance for DCP force activation
+		BOX_SIZE (float): Simulation space side length (for toroidal wrap)
+
+	Returns:
+		np.ndarray: Nx3 array of net force vectors per particle
+	"""
+	forces = np.zeros_like(positions)
+	cutoff_radius_squared = (2.5 * r0) ** 2
+
+	for i in prange(N):
+		for j in range(N):
+			if i == j:
 				continue
 
-			inv_r2 = 1.0 / r2
-			inv_r6 = (sigma * sigma * inv_r2) ** 3
-			inv_r12 = inv_r6 * inv_r6
+			dx = positions[i][0] - positions[j][0]
+			dy = positions[i][1] - positions[j][1]
+			dz = positions[i][2] - positions[j][2]
 
-			f_mag = 24 * epsilon * inv_r2 * (2 * inv_r12 - inv_r6)
-			
-			if not math.isfinite(f_mag):
-				print(f"[FATAL] Bad f_mag at r²={r2}, f_mag={f_mag}, dx={dx}, dy={dy}, dz={dz}")
+			# Toroidal wrapping
+			if dx > 0.5 * BOX_SIZE:
+				dx -= BOX_SIZE
+			elif dx < -0.5 * BOX_SIZE:
+				dx += BOX_SIZE
+			if dy > 0.5 * BOX_SIZE:
+				dy -= BOX_SIZE
+			elif dy < -0.5 * BOX_SIZE:
+				dy += BOX_SIZE
+			if dz > 0.5 * BOX_SIZE:
+				dz -= BOX_SIZE
+			elif dz < -0.5 * BOX_SIZE:
+				dz += BOX_SIZE
+
+			r2 = dx * dx + dy * dy + dz * dz
+			if r2 > cutoff_radius_squared:
 				continue
 
-			if not math.isfinite(f_mag):
-				continue  # extra protection
+			r = math.sqrt(r2)
+			r = max(r, 1e-5)
+			inv_r = 1.0 / r
 
-			fx = f_mag * dx
-			fy = f_mag * dy
-			fz = f_mag * dz
+			dir_x = dx * inv_r
+			dir_y = dy * inv_r
+			dir_z = dz * inv_r
 
+			# Morse force
+			delta = r - r0
+			exp_input = min(alpha * delta, 50.0)
+			exp_term = math.exp(-exp_input)
+			f_morse = -2 * D * alpha * (1 - exp_term) * exp_term
+
+			# Repulsive short-range force (only active when r < repel_cutoff)
+			f_dcp = 0.0
+			if r < dcp_cutoff:
+				f_dcp = dcp_k / (r * r)
+
+			# Combine forces
+			fx = (f_morse + f_dcp) * dir_x
+			fy = (f_morse + f_dcp) * dir_y
+			fz = (f_morse + f_dcp) * dir_z
+
+			# Apply forces
 			forces[i, 0] += fx
 			forces[i, 1] += fy
 			forces[i, 2] += fz
+
 			forces[j, 0] -= fx
 			forces[j, 1] -= fy
 			forces[j, 2] -= fz
 
 	return forces
 
-# Lennard-Jones Hamiltonian energy computation
-@njit
-def compute_lj_hamiltonian(positions: np.ndarray, velocities: np.ndarray, N: int, epsilon: float, sigma: float, BOX_SIZE: float) -> tuple:
-	ke = 0.5 * np.sum(velocities**2)
-	pe = 0.0
+@njit(fastmath=True)
+def compute_hamiltonian_energy_safe_dcp(
+	positions: np.ndarray,
+	velocities: np.ndarray,
+	N: int,
+	D: float,
+	alpha: float,
+	r0: float,
+	dcp_k: float,
+	dcp_cutoff: float,
+	BOX_SIZE: float
+):
+	"""
+	Compute the total Hamiltonian energy (KE + PE) of the full system.
 
-	for i in range(N):
+	This function calculates:
+	- Total kinetic energy from per-particle velocities
+	- Total potential energy using pairwise Morse + DCP (repulsive) interactions
+	- Applies toroidal (periodic) boundary conditions for space wrapping
+
+	The Morse potential captures quantum attraction:
+		PE_morse = D * (1 - exp(-alpha * (r - r0)))^2
+
+	While the Dirac Core Pressure (DCP) term introduces a soft repulsion:
+		PE_dcp = -dcp_k / r (if r < dcp_cutoff)
+
+	This function is used for energy tracking, stability validation, and 
+	Hamiltonian analysis at every frame.
+
+	Parameters:
+		positions (np.ndarray): Nx3 array of particle positions
+		velocities (np.ndarray): Nx3 array of particle velocities
+		N (int): Number of particles in the system
+		D (float): Morse well depth (attraction strength)
+		alpha (float): Morse sharpness (controls steepness)
+		r0 (float): Morse equilibrium distance
+		dcp_k (float): Dirac repulsion constant
+		dcp_cutoff (float): Distance cutoff for DCP interaction
+		BOX_SIZE (float): Length of the toroidal simulation cube
+
+	Returns:
+		tuple:
+			- ke (float): Total kinetic energy
+			- pe (float): Total potential energy
+			- h_total (float): Hamiltonian = KE + PE
+	"""
+	ke = 0.0
+	for i in prange(N):
+		ke += 0.5 * np.dot(velocities[i], velocities[i])
+
+	pe = 0.0
+	for i in prange(N):
 		for j in range(i + 1, N):
 			dx = positions[i][0] - positions[j][0]
 			dy = positions[i][1] - positions[j][1]
 			dz = positions[i][2] - positions[j][2]
 
+			# Toroidal wrapping
 			if dx > 0.5 * BOX_SIZE:
 				dx -= BOX_SIZE
 			elif dx < -0.5 * BOX_SIZE:
 				dx += BOX_SIZE
-
 			if dy > 0.5 * BOX_SIZE:
 				dy -= BOX_SIZE
 			elif dy < -0.5 * BOX_SIZE:
 				dy += BOX_SIZE
-
 			if dz > 0.5 * BOX_SIZE:
 				dz -= BOX_SIZE
 			elif dz < -0.5 * BOX_SIZE:
 				dz += BOX_SIZE
 
-			r2 = dx*dx + dy*dy + dz*dz
-			if r2 < 1e-4:
-				continue
+			r = math.sqrt(dx * dx + dy * dy + dz * dz)
+			r = max(r, 1e-5)  # Prevent zero distance
+			delta = r - r0
+			exp_input = min(alpha * delta, 50.0)
+			exp_term = math.exp(-exp_input)
+			morse = D * (1 - exp_term) ** 2
+			pe += morse
 
-			inv_r2 = 1.0 / r2
-			inv_r6 = (sigma * sigma * inv_r2) ** 3
-			inv_r12 = inv_r6 * inv_r6
-
-			pe += 4 * epsilon * (inv_r12 - inv_r6)
+			# Repulsive potential term
+			if r < dcp_cutoff:
+				pe += -dcp_k / r
 
 	return ke, pe, ke + pe
 
-@njit
-def compute_cluster_energy(cluster_indices, positions, velocities, epsilon, sigma, BOX_SIZE):
+@njit(fastmath=True)
+def compute_effective_lagrangian_forces_safe_dcp(
+	positions: np.ndarray,
+	N: int,				# N count of objects
+	D: float,         	# Morse depth
+	alpha: float,     	# Morse sharpness
+	r0: float,        	# Morse equilibrium distance
+	dcp_k: float,   	# Repulsive force constant
+	dcp_cutoff: float,  # Repulsive force cutoff distance
+	BOX_SIZE: float		# Size of cube.
+) -> np.ndarray:
+	"""
+	Compute the net classical forces on all particles using a local Lagrangian model.
+
+	This function calculates the per-particle net force from pairwise interactions
+	using a combination of:
+
+	- Morse potential (attractive):  
+	  F_morse = -2 * D * alpha * (1 - exp(-alpha(r - r0))) * exp(-alpha(r - r0))
+
+	- Dirac Core Pressure (repulsive):  
+	  F_dcp = dcp_k / r^2  (only applied within cutoff)
+
+	Forces are symmetrically applied to both particles (Newton’s 3rd Law), and
+	toroidal (periodic) boundary conditions are enforced for spatial wrapping.
+
+	This is the core per-frame force model that governs all local interactions in
+	the Spherical Field Theory simulation.
+
+	Parameters:
+		positions (np.ndarray): Nx3 array of particle positions
+		N (int): Number of particles
+		D (float): Morse potential well depth
+		alpha (float): Morse sharpness parameter
+		r0 (float): Morse equilibrium distance
+		dcp_k (float): Dirac-like repulsive force strength
+		dcp_cutoff (float): Cutoff distance for DCP force activation
+		BOX_SIZE (float): Simulation space side length (for toroidal wrap)
+
+	Returns:
+		np.ndarray: Nx3 array of net force vectors per particle
+	"""
+	forces = np.zeros_like(positions)
+	cutoff_radius_squared = (2.5 * r0) ** 2
+
+	for i in prange(N):
+		for j in range(N):
+			if i == j:
+				continue
+
+			dx = positions[i][0] - positions[j][0]
+			dy = positions[i][1] - positions[j][1]
+			dz = positions[i][2] - positions[j][2]
+
+			# Toroidal wrapping
+			if dx > 0.5 * BOX_SIZE:
+				dx -= BOX_SIZE
+			elif dx < -0.5 * BOX_SIZE:
+				dx += BOX_SIZE
+			if dy > 0.5 * BOX_SIZE:
+				dy -= BOX_SIZE
+			elif dy < -0.5 * BOX_SIZE:
+				dy += BOX_SIZE
+			if dz > 0.5 * BOX_SIZE:
+				dz -= BOX_SIZE
+			elif dz < -0.5 * BOX_SIZE:
+				dz += BOX_SIZE
+
+			r2 = dx * dx + dy * dy + dz * dz
+			if r2 > cutoff_radius_squared:
+				continue
+
+			r = math.sqrt(r2)
+			r = max(r, 1e-5)
+			inv_r = 1.0 / r
+
+			dir_x = dx * inv_r
+			dir_y = dy * inv_r
+			dir_z = dz * inv_r
+
+			# Morse force
+			delta = r - r0
+			exp_input = min(alpha * delta, 50.0)
+			exp_term = math.exp(-exp_input)
+			f_morse = -2 * D * alpha * (1 - exp_term) * exp_term
+
+			# Repulsive short-range force (only active when r < dcp_cutoff)
+			f_dcp = 0.0
+			if r < dcp_cutoff:
+				f_dcp = dcp_k / (r * r)
+
+			# Combine forces
+			fx = (f_morse + f_dcp) * dir_x
+			fy = (f_morse + f_dcp) * dir_y
+			fz = (f_morse + f_dcp) * dir_z
+
+			# Apply forces
+			forces[i, 0] += fx
+			forces[i, 1] += fy
+			forces[i, 2] += fz
+
+			forces[j, 0] -= fx
+			forces[j, 1] -= fy
+			forces[j, 2] -= fz
+
+	return forces
+
+@njit(fastmath=True)
+def compute_cluster_energy(cluster_indices, positions, velocities, D, alpha, r0, repel_k, repel_cutoff, BOX_SIZE):
+	"""
+	Compute the Hamiltonian energy of a single cluster.
+
+	This function calculates the total kinetic + potential energy of a
+	cluster of particles using a Morse potential and short-range repulsion
+	under periodic boundary conditions.
+
+	The potential energy is pairwise-computed for each unique particle pair
+	within the cluster, and includes:
+	- Morse attraction term: D * (1 - exp(-alpha * (r - r0)))^2
+	- Dirac-like soft repulsion term: -repel_k / r (active within repel_cutoff)
+
+	Periodic boundary conditions are applied to simulate a toroidal space.
+
+	Parameters:
+		cluster_indices (np.ndarray[int]): Array of particle indices in the cluster
+		positions (np.ndarray[float]): Nx3 array of particle positions
+		velocities (np.ndarray[float]): Nx3 array of particle velocities
+		D (float): Morse potential well depth
+		alpha (float): Morse potential sharpness
+		r0 (float): Morse equilibrium distance
+		repel_k (float): Dirac core pressure constant (soft repulsion)
+		repel_cutoff (float): Distance cutoff for repulsion
+		BOX_SIZE (float): Size of the simulation box (assumes periodic)
+
+	Returns:
+		float: Total Hamiltonian energy (KE + PE) of the cluster
+	"""
 	ke = 0.0
 	for i in range(len(cluster_indices)):
 		idx = cluster_indices[i]
@@ -346,7 +892,7 @@ def compute_cluster_energy(cluster_indices, positions, velocities, epsilon, sigm
 			dy = positions[i_idx][1] - positions[j_idx][1]
 			dz = positions[i_idx][2] - positions[j_idx][2]
 
-			# PBC wrap
+			# Periodic boundary conditions
 			if dx > 0.5 * BOX_SIZE:
 				dx -= BOX_SIZE
 			elif dx < -0.5 * BOX_SIZE:
@@ -360,33 +906,104 @@ def compute_cluster_energy(cluster_indices, positions, velocities, epsilon, sigm
 			elif dz < -0.5 * BOX_SIZE:
 				dz += BOX_SIZE
 
-			r2 = dx*dx + dy*dy + dz*dz
-			if r2 < 1e-4:
-				continue  # avoid singularity
+			r = max((dx*dx + dy*dy + dz*dz)**0.5, 1e-5)
 
-			inv_r2 = 1.0 / r2
-			inv_r6 = (sigma * sigma * inv_r2) ** 3
-			inv_r12 = inv_r6 * inv_r6
+			delta = r - r0
+			exp_input = min(alpha * delta, 50.0)
+			exp_term = math.exp(-exp_input)
+			morse = D * (1 - exp_term) ** 2
+			pe += morse
 
-			pe += 4 * epsilon * (inv_r12 - inv_r6)
+			if r < repel_cutoff:
+				pe += -repel_k / r
 
 	return ke + pe
 
+### ──────────────────────── Computational Functions ───────────────────── ###
+
+### ──────────────────────── Color and Charge Functions ────────────────── ###
 
 def color_to_charge(color):
+	"""
+	Convert a particle's color state to its corresponding quantum charge.
+
+	This mapping defines how color states translate to charge values:
+	- 0 → +1 (positive)
+	- 1 →  0 (neutral)
+	- 2 → -1 (negative)
+
+	Used as the basis for computing net charge of clusters.
+
+	Parameters:
+		color (int): The color index of a particle (0, 1, or 2)
+
+	Returns:
+		int: The corresponding quantum charge
+	"""
 	return {0: +1, 1: 0, 2: -1}[color]
 	
 def cluster_charge(cluster_indices, colors):
+	"""
+	Calculate the net charge of a cluster based on member colors.
+
+	Uses `color_to_charge()` to convert each particle's color state
+	into its associated charge, then sums the results.
+
+	Parameters:
+		cluster_indices (list[int]): Indices of the particles in the cluster
+		colors (np.ndarray): Array of particle color states (0, 1, or 2)
+
+	Returns:
+		int: Net charge of the cluster
+	"""
 	return sum(color_to_charge(colors[i]) for i in cluster_indices)
 
-######################## Logging functions for writing to CSV files. ########################
+### ──────────────────────── Color and Charge Functions ────────────────── ###
+
+### ──────────────────────── Logging Functions ─────────────────────────── ###
 
 def write_summary_row(
-	logdir, frame, ke, stable_count, unstable_count,
-	just_born, just_died, spin_flips, color_flips,
-	cluster_radius_stats, min_dist, max_dist, mean_dist,
-	ke_loss, clusters_damped, particles_damped
+	logdir, frame, ke, just_born, just_died, spin_flips,
+	color_flips, cluster_radius_stats, ke_loss, clusters_damped,
+	particles_damped, avg_force_mag, work_done, force_velocity_alignment,
+	total_clusters, max_cluster_size, velocity_std
 ):
+	"""
+	Write a single summary row for the current simulation frame.
+
+	Creates or appends to 'summary.csv' in the specified log directory.
+	This file tracks frame-wise scalar data used for global time-series analysis.
+
+	Columns include:
+	- Frame number
+	- Kinetic energy
+	- Number of new and dissolved protons
+	- Spin and color flip counts
+	- Cluster radius stats (avg/min/max)
+	- KE lost via cluster damping
+	- Total clusters and cluster size
+	- Force/Work/Alignment metrics
+	- Velocity standard deviation
+
+	Parameters:
+		logdir (str): Path to output directory
+		frame (int): Current frame number
+		ke (float): Kinetic energy
+		just_born (set): Proton cluster IDs born this frame
+		just_died (set): Proton cluster IDs dissolved this frame
+		spin_flips (int): Spin flips this frame
+		color_flips (int): Color flips this frame
+		cluster_radius_stats (list[int]): Per-particle neighbor counts
+		ke_loss (float): Total KE lost to damping
+		clusters_damped (int): Damped cluster count
+		particles_damped (int): Damped particle count
+		avg_force_mag (float): Mean per-particle force magnitude
+		work_done (float): Frame-level dot(F, v) work
+		force_velocity_alignment (float): Mean cos(F·v) across particles
+		total_clusters (int): Total cluster count this frame
+		max_cluster_size (int): Largest cluster this frame
+		velocity_std (float): Std dev of particle velocity magnitudes
+	"""
 	summary_path = os.path.join(logdir, "summary.csv")
 	file_exists = os.path.isfile(summary_path)
 
@@ -395,137 +1012,88 @@ def write_summary_row(
 		if not file_exists:
 			writer.writerow([
 				"Frame", "KE",
-				"StableProtons", "UnstableParticles",
 				"NewBorn", "Dissolved",
 				"SpinFlips", "ColorFlips",
 				"AvgClusterSize", "MinClusterSize", "MaxClusterSize",
-				"MinDistance", "MaxDistance", "MeanDistance",
-				"KELossRadiative", "ClustersDamped", "ParticlesDamped"
+				"KELossClusterDamp", "ClustersDamped", "ParticlesDamped",
+				"AvgForceMag", "WorkDone", "ForceVelocityAlignment",
+				"TotalClusters", "MaxClusterSize", "VelocityStd"
 			])
-		writer.writerow([
-			frame, f"{ke:.5f}",
-			stable_count, unstable_count,
-			len(just_born), len(just_died),
-			spin_flips, color_flips,
-			round(np.mean(cluster_radius_stats), 2),
-			min(cluster_radius_stats),
-			max(cluster_radius_stats),
-			round(min_dist, 5), round(max_dist, 5), round(mean_dist, 5),
-			round(ke_loss, 5), clusters_damped, particles_damped
-		])
-
-def write_lifetime_histogram_row(logdir, frame, lifetime_bins):
-	path = os.path.join(logdir, "proton_lifetimes_by_frame.csv")
-	file_exists = os.path.isfile(path)
-
-	with open(path, 'a', newline='') as f:
-		writer = csv.writer(f)
-		if not file_exists:
-			writer.writerow(["Frame", "LifetimeBin", "ProtonCount"])
-
-		for bucket, count in sorted(lifetime_bins.items()):
-			writer.writerow([frame, bucket, count])
+			writer.writerow([
+				frame, f"{ke:.10f}",
+				len(just_born), len(just_died),
+				spin_flips, color_flips,
+				f"{np.mean(cluster_radius_stats):.5f}",
+				min(cluster_radius_stats),
+				max(cluster_radius_stats),
+				f"{ke_loss:.10f}", clusters_damped, particles_damped,
+				f"{avg_force_mag:.10f}",
+				f"{work_done:.10f}",
+				f"{force_velocity_alignment:.10f}",
+				total_clusters, max_cluster_size,
+				f"{velocity_std:.10f}"
+			])
 
 def write_quantum_log_row(logdir, frame, spin_flips, color_flips, dt, ke, pe, hamiltonian):
-    path = os.path.join(logdir, "quantum_logs.csv")
-    file_exists = os.path.isfile(path)
+	"""
+	Write a single row to the quantum system log.
 
-    with open(path, 'a', newline='') as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow([
-                "Frame", "SpinFlips", "ColorFlips", "DT",
-                "KineticEnergy", "PotentialEnergy", "HamiltonianEnergy"
-            ])
-        writer.writerow([
-            frame, spin_flips, color_flips, round(dt, 6),
-            round(ke, 6), round(pe, 6), round(hamiltonian, 6)
-        ])
+	Appends frame-level energy and flip counts to 'quantum_logs.csv'.
 
-def write_proton_charges(logdir, frame, charge_data):
-	path = os.path.join(logdir, "proton_charges.csv")
+	Columns:
+	- Frame
+	- SpinFlips / ColorFlips
+	- DT (time step)
+	- Kinetic, Potential, and Hamiltonian energy
+
+	Parameters:
+		logdir (str): Log output directory
+		frame (int): Frame number
+		spin_flips (int): Spin flips this frame
+		color_flips (int): Color flips this frame
+		dt (float): Timestep value used
+		ke (float): Kinetic energy
+		pe (float): Potential energy
+		hamiltonian (float): Total system Hamiltonian energy
+	"""
+	path = os.path.join(logdir, "quantum_logs.csv")
 	file_exists = os.path.isfile(path)
 
 	with open(path, 'a', newline='') as f:
 		writer = csv.writer(f)
 		if not file_exists:
-			writer.writerow(["Frame", "ClusterID", "Charge"])
-
-		for cluster_id, charge in charge_data:
-			cluster_label = "-".join(map(str, sorted(cluster_id)))
-			writer.writerow([frame, cluster_label, charge])
-
-def write_lifetimes_by_charge(logdir, frame, birth_frames, death_frames, charges):
-	path = os.path.join(logdir, "proton_lifetimes_by_charge.csv")
-	file_exists = os.path.isfile(path)
-
-	with open(path, 'a', newline='') as f:
-		writer = csv.writer(f)
-		if not file_exists:
-			writer.writerow(["Frame", "ClusterID", "Charge", "Lifetime"])
-
-		for cluster in birth_frames:
-			if cluster in death_frames and cluster in charges:
-				birth = birth_frames[cluster]
-				death = death_frames[cluster]
-				charge = charges[cluster]
-				lifetime = death - birth
-				cluster_label = "-".join(map(str, sorted(cluster)))
-				writer.writerow([frame, cluster_label, charge, lifetime])
-				
-def write_charge_lifetimes_framewise(logdir, frame, birth_frames, active_clusters, charges):
-    path = os.path.join(logdir, "proton_charge_lifetimes.csv")
-    file_exists = os.path.isfile(path)
-
-    with open(path, 'a', newline='') as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["Frame", "ClusterID", "Charge", "Lifetime"])
-
-        for cluster in active_clusters:
-            if cluster in birth_frames and cluster in charges:
-                birth = birth_frames[cluster]
-                charge = charges[cluster]
-                lifetime = frame - birth
-                cluster_label = "-".join(map(str, sorted(cluster)))
-                writer.writerow([frame, cluster_label, charge, lifetime])
-
-def write_binding_energy(logdir, energy_log_data):
-	path = os.path.join(logdir, "proton_binding_energy.csv")
-	file_exists = os.path.isfile(path)
-	with open(path, 'a', newline='') as f:
-		writer = csv.writer(f)
-		if not file_exists:
-			writer.writerow(["Frame", "ClusterID", "Charge", "BindingEnergy"])
-		for frame, cluster, charge, energy in energy_log_data:
-			cluster_str = "-".join(map(str, sorted(cluster)))
-			writer.writerow([frame, cluster_str, charge, energy])
-
-def write_unstable_particles(logdir, unstable_log_data):
-    path = os.path.join(logdir, "unstable_particles.csv")
-    file_exists = os.path.isfile(path)
-    with open(path, 'a', newline='') as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["Frame", "ClusterID", "FailureReason"])
-        for frame, cluster_id, reason in unstable_log_data:
-            cluster_str = "-".join(map(str, sorted(cluster_id)))
-            writer.writerow([frame, cluster_str, reason])
-
-def write_unknown_particles(logdir, data):
-    path = os.path.join(logdir, "unknown_particles.csv")
-    file_exists = os.path.isfile(path)
-    with open(path, 'a', newline='') as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["Frame", "ClusterID", "Reason"])
-        for frame, cluster_id, reason in data:
-            writer.writerow([frame, "-".join(map(str, sorted(cluster_id))), reason])
+			writer.writerow([
+				"Frame", "SpinFlips", "ColorFlips", "DT",
+				"KineticEnergy", "PotentialEnergy", "HamiltonianEnergy"
+			])
+			writer.writerow([
+				frame,
+				spin_flips,
+				color_flips,
+				f"{dt:.10f}",
+				f"{ke:.10f}",
+				f"{pe:.10f}",
+				f"{hamiltonian:.10f}"
+			])
 
 def write_cluster_lifetimes(logdir, cluster_lifetimes):
 	"""
-	Writes cluster lifetime data to one CSV per cluster size.
-	Each file contains: ClusterID, BirthFrame, DeathFrame, Lifetime
+	Write cluster lifetime data to separate CSV files per cluster size.
+
+	For each cluster size (e.g., size=3), a CSV file named
+	'cluster_lifetimes_size_<size>.csv' is created or appended to
+	in the specified log directory.
+
+	Each file contains the following columns:
+	- ClusterID (str): Particle indices joined by dashes (sorted)
+	- BirthFrame (int or str): The frame when the cluster first formed
+	- DeathFrame (int or str): The frame when the cluster dissolved
+	- Lifetime (int): Number of frames the cluster persisted
+
+	Parameters:
+		logdir (str): Path to the directory where files will be written.
+		cluster_lifetimes (dict): Dictionary keyed by cluster size (int),
+			with values as {ClusterID: Lifetime} mappings.
 	"""
 	for size, lifetimes in cluster_lifetimes.items():
 		filename = f"cluster_lifetimes_size_{size}.csv"
@@ -541,22 +1109,278 @@ def write_cluster_lifetimes(logdir, cluster_lifetimes):
 				birth = quantum.cluster_birth_frames[size].get(cid, "unknown")
 				death = quantum.cluster_death_frames[size].get(cid, "unknown")
 
-				# Format ClusterID as a readable sorted list
-				cid_str = "-".join(map(str, sorted(cid)))
-				writer.writerow([cid_str, birth, death, lifetime])
+				writer.writerow([cid, birth, death, lifetime])
 
-######################## Logging functions for writing to CSV files. ########################
+def write_binding_energy(logdir, energy_log_data):
+	"""
+	Write proton binding energy data to a CSV file.
+
+	Appends new binding energy records to 'proton_binding_energy.csv'
+	in the specified log directory. If the file does not exist, a header
+	row is written first.
+
+	Each row contains:
+	- Frame number (int)
+	- ClusterID (str) : particle indices joined by dashes (sorted)
+	- Charge (int)
+	- BindingEnergy (float)
+
+	Parameters:
+		logdir (str): The directory where the CSV file is stored.
+		energy_log_data (list): A list of tuples in the form:
+			(frame: int, cluster: list[int], charge: int, energy: float)
+	"""
+	path = os.path.join(logdir, "proton_binding_energy.csv")
+	file_exists = os.path.isfile(path)
+	with open(path, 'a', newline='') as f:
+		writer = csv.writer(f)
+		if not file_exists:
+			writer.writerow(["Frame", "ClusterID", "Charge", "BindingEnergy"])
+		for frame, cluster, charge, energy in energy_log_data:
+			cluster_str = generate_cluster_id(cluster)
+			writer.writerow([
+				frame,
+				cluster_str,
+				charge,
+				f"{energy:.10f}"
+			])
+
+### ──────────────────────── Logging Functions ─────────────────────────── ###
+
+### ──────────────────────── Cluster ID Functions ──────────────────────── ###
+
+def generate_cluster_id(cluster_indices):
+	"""
+	Generate a unique, reproducible string ID from a list of particle indices.
+
+	Used to create a canonical identifier for a cluster based on the indices
+	of the particles it contains. The resulting string is:
+	- Deterministic (sorted)
+	- Compact (colon-delimited)
+	- Hashable (used as a dictionary key)
+
+	Example:
+		[5, 2, 9] → "2:5:9"
+
+	Parameters:
+		cluster_indices (list[int]): List of particle indices in the cluster.
+
+	Returns:
+		str: Cluster ID string.
+	"""
+	return ":".join(map(str, sorted(cluster_indices)))
+
+def parse_cluster_id(cluster_id):
+	"""
+	Parse a cluster ID string into a list of particle indices.
+
+	Used to convert a stored or logged ClusterID string back into its
+	original list of particle indices. If the input is already a list, it is
+	returned unchanged to ensure compatibility with mixed ID usage.
+
+	Example:
+		"3:7:8" → [3, 7, 8]
+
+	Parameters:
+		cluster_id (str or list[int]): Cluster ID in string or list form.
+
+	Returns:
+		list[int]: Particle indices representing the cluster.
+	"""
+	if isinstance(cluster_id, str):
+		return list(map(int, cluster_id.split(":")))
+	return cluster_id  # Already a list — just return it as-is
+	
+def get_cluster_birth_frame(size, cid):
+	"""
+	Retrieve the birth frame of a cluster from the quantum tracking dictionary.
+
+	This function looks up when a specific cluster (by size and ID) first formed.
+	If the cluster ID is not yet a string, it will be generated from the list
+	using `generate_cluster_id`.
+
+	Parameters:
+		size (int): Size of the cluster (number of particles).
+		cid (str or list[int]): Cluster ID string or list of particle indices.
+
+	Returns:
+		int or None: Frame number when the cluster was first recorded, or None
+	if not found.
+	"""
+	if not isinstance(cid, str):
+		cid = generate_cluster_id(cid)
+	return quantum.cluster_birth_frames[size].get(cid, None)
+
+### ──────────────────────── Cluster ID Functions ──────────────────────── ###
+
+### ──────────────────────── SHA256 File Hash Functions ────────────────── ###
+
+def verify_run_integrity(log_dir):
+	"""
+	Verify full simulation run integrity using SHA-256 hash validation.
+
+	This function performs a comprehensive integrity check on all files 
+	within the simulation output directory by comparing their current 
+	SHA-256 hashes against the values recorded in 'hashes.json'.
+
+	If any file differs in content, is missing, or has been tampered with, 
+	the function will terminate the simulation immediately (unless running 
+	in --fast mode, which bypasses verification for exploratory runs).
+
+	The following files are typically verified:
+		- metadata.json
+		- All .csv log outputs (summary, quantum_logs, etc.)
+		- Any additional files included in 'hashes.json'
+
+	This ensures:
+		- Deterministic results originate from unaltered source and config
+		- Metadata reflects the actual run conditions
+		- Logging artifacts have not been retroactively modified
+
+	Parameters:
+		log_dir (str): The output directory containing hashes.json 
+					   and simulation logs to verify.
+
+	Raises:
+		SystemExit: If any hash mismatch is detected or a listed file is missing.
+
+	Notes:
+		This mechanism enforces strict reproducibility for validated runs 
+		and should always be run when not using --fast mode.
+	"""
+	hash_path = os.path.join(log_dir, "hashes.json")
+	if not os.path.isfile(hash_path):
+		print("[WARN] No hashes.json found. Skipping integrity check.")
+		return
+
+	with open(hash_path, "r") as f:
+		expected_hashes = json.load(f)
+
+	for rel_path, expected_hash in expected_hashes.items():
+		full_path = os.path.join(log_dir, rel_path)
+		if not os.path.isfile(full_path):
+			print(f"[ERROR] Missing file in run directory: {rel_path}")
+			sys.exit(1)
+
+		actual_hash = sha256_file(full_path)
+		if actual_hash != expected_hash:
+			print(f"[ERROR] Hash mismatch for {rel_path}")
+			print(f"  Expected: {expected_hash}")
+			print(f"  Found:    {actual_hash}")
+			sys.exit(1)
+
+	print("[OK] All file hashes match — run is verified.")
+
+def hash_self():
+	"""
+	Compute the SHA-256 hash of the currently executing Python script.
+
+	This function reads the full contents of the current source file 
+	(as identified by `__file__`) and calculates its SHA-256 hash.
+	The result is a deterministic, fixed-length string that uniquely 
+	represents the exact code used for the simulation run.
+
+	This allows precise identification of the simulation version 
+	used to produce a given output dataset, even if no formal version 
+	control system (e.g., Git) is being used.
+
+	The hash can be included in logs or metadata.json to ensure full 
+	reproducibility and code integrity across different platforms, 
+	machines, or historical runs.
+
+	Returns:
+		str: A 64-character hexadecimal SHA-256 digest of the current script.
+	"""
+	path = os.path.abspath(__file__)
+	with open(path, "rb") as f:
+		return hashlib.sha256(f.read()).hexdigest()
+
+def sha256_file(path):
+	"""
+	Compute the SHA256 hash of a file.
+
+	Reads the file at the given path in binary mode and returns its
+	SHA256 checksum as a hexadecimal string. This is used for verifying
+	data integrity or comparing file content across machines.
+
+	Parameters:
+		path (str): Absolute or relative path to the file.
+
+	Returns:
+		str: SHA256 hash of the file's contents, in hexadecimal format.
+	"""
+	with open(path, "rb") as f:
+		return hashlib.sha256(f.read()).hexdigest()
+
+def write_hash_manifest(log_dir):
+	"""
+	Generate and write SHA256 hashes for all output files in a directory.
+
+	Recursively scans the specified log directory and computes a SHA256
+	hash for each file, skipping the output hash file itself ("hashes.json").
+	Writes the results to a JSON file (`hashes.json`) that maps relative file
+	paths to their corresponding hashes.
+
+	This manifest can be used to:
+	- Verify file integrity after simulation runs
+	- Detect tampering or corruption
+	- Compare identical runs across systems or environments
+
+	Parameters:
+		log_dir (str): Path to the root output directory where files are stored.
+
+	Outputs:
+		hashes.json (in log_dir): A JSON file mapping relative file paths to SHA256 hashes.
+	"""
+	hashes = {}
+	for root, _, files in os.walk(log_dir):
+		for name in files:
+			# Skip the hash file itself
+			if name == "hashes.json":
+				continue
+			full_path = os.path.join(root, name)
+			rel_path = os.path.relpath(full_path, log_dir)
+			hashes[rel_path] = sha256_file(full_path)
+
+	with open(os.path.join(log_dir, "hashes.json"), "w") as f:
+		json.dump(hashes, f, indent=2)
+		
+### ──────────────────────── SHA256 File Hash Functions ────────────────── ###
+
+### ──────────────────────── Primary Update Function ───────────────────── ###
 
 def update(frame):
+	"""
+	Primary per-frame update function for the Spherical Field Theory simulation.
+
+	This function is the core engine of the simulation, handling:
+	- Sphere position updates and force integration
+	- Neighbor lookup and cluster detection via KDTree
+	- Proton/superproton classification (based on spin and color rules)
+	- Charge and binding energy tracking
+	- Radiative damping of valid clusters
+	- Logging of cluster birth/death, spin flips, energy metrics, KE trends
+	- Per-frame CSV and quantum log writes
+	- GUI scatter plot updates (if not in headless mode)
+	- Terminal output (if verbose or headless mode enabled)
+
+	The result is stored in quantum.live_stats for optional GUI display.
+
+	Parameters:
+		frame (int): Current simulation frame number.
+
+	Returns:
+		tuple or None: Updated matplotlib scatter plot, or None in headless mode.
+	"""
 	global previous_proton_ids, start_time
-	
+
 	frame_start = time.time()
-	
+
 	ke = quantum.update()
 
-	radius = 0.1 * PLANCK_LENGTH
 
-	tree = cKDTree(quantum.positions)
+	radius = 0.1 * quantum.planck_length
+
 	proton_clusters = []
 	charge_log_data = []
 	energy_log_data = []
@@ -571,23 +1395,24 @@ def update(frame):
 	unknown_particle_log = []  # New: catch-all for non-proton-like clusters
 	quantum.unstable_clusters.clear()
 
+	tree = cKDTree(quantum.positions)
+
 	for i in range(quantum.N):
 		cluster = tree.query_ball_point(quantum.positions[i], radius)
 		cluster = [j for j in cluster if j != i]  # NOW back in
 		cluster_radius_stats.append(len(cluster))
 
 		full_cluster = [i] + cluster
-		cluster_id = frozenset(full_cluster)
+		cluster_id = generate_cluster_id(full_cluster)
 		
 		if cluster_id in seen_cluster_ids:
 			continue  # Already processed
-
+		
 		seen_cluster_ids.add(cluster_id)
 		cluster_size = len(full_cluster)
 		quantum.current_clusters_by_size[cluster_size].add(cluster_id)
 
 		if cluster_id not in quantum.previous_clusters_by_size.get(cluster_size, set()):
-			#print(f"[DEBUG] Frame {frame}: registering birth for cluster {cluster_id} (size {cluster_size})")
 			quantum.cluster_birth_frames[cluster_size][cluster_id] = quantum.frame
 		
 		# Track this cluster size
@@ -609,19 +1434,18 @@ def update(frame):
 				if cluster_id not in charge_log_ids:
 					charge_log_ids.add(cluster_id)
 					charge = cluster_charge(full_cluster, quantum.colors)
+					cluster_indices_np = np.array(full_cluster, dtype=np.int32)
 					cluster_energy = compute_cluster_energy(
-						full_cluster,
+						cluster_indices_np,
 						quantum.positions,
 						quantum.velocities,
-						quantum.epsilon,
-						quantum.sigma,
+						quantum.D,
+						quantum.alpha,
+						quantum.r0,
+						quantum.dcp_k,
+						quantum.dcp_cutoff,
 						quantum.BOX_SIZE
 					)
-					
-					binding_energy = cluster_energy - sum(0.5 * np.sum(quantum.velocities[i]**2) for i in full_cluster)
-					
-					if quantum.verbose or HEADLESS:
-						print(f"Frame {frame}: Proton Cluster {full_cluster} → Net Charge: {charge} | Binding Energy: {cluster_energy:.5f}")
 
 					quantum.proton_charges[cluster_id] = charge
 					charge_log_data.append((cluster_id, charge))
@@ -635,154 +1459,144 @@ def update(frame):
 				new_proton_ids.add(cluster_id)
 				proton_clusters.extend(full_cluster)
 				continue  # skip the unstable logic below
-			else:
-				# Failed 3-sphere classification
-				if len(unique_colors) not in (1, 2):
-					reason = "color_mismatch"
-				elif abs(sum(spins)) > 1:
-					reason = "spin_violation"
-				elif sorted(counts) != [1, 2]:
-					reason = "color_ratio_wrong"
-				else:
-					reason = "unknown_failure"
 
-				unstable_clusters.update(full_cluster)
-				unstable_log_data.append((frame, cluster_id, reason))
-		else:
-			reason = f"size_{cluster_size}"
-			unknown_particle_log.append((frame, cluster_id, reason))
-	
+	# Radiative dampening section
+
 	frame_ke_loss = 0.0  # RESET just before applying damping!
 	clusters_damped = 0
 	particles_damped = 0
 
 	for size, clusters in clusters_by_size.items():
 		if size >= 3:
-			for cluster in clusters:
-				cluster_id = frozenset(cluster)
+			for cluster_id in clusters:
+				cluster_members = parse_cluster_id(cluster_id)
 
-				birth_frame = quantum.cluster_birth_frames[size].get(cluster_id, None)
+				birth_frame = get_cluster_birth_frame(size, cluster_id)
 				if birth_frame is None:
-					continue  # unknown cluster
+					birth_frame = quantum.frame - 1
 
 				lifetime = frame - birth_frame
-				if lifetime < 3:
-					continue  # too young to safely dampen
-
+				if lifetime < 2:
+					continue  # too young to safely damped
+				
 				# Stronger damp based on size
-				base_damp = 0.998
-				extra = min(0.001 * (size - 3), 0.010)
+				base_damp = 0.995
+				extra = min(0.002 * (size - 3), 0.025)
 				damp_factor = base_damp - extra
+				
+				if lifetime > 20:
+					damp_factor -= 0.002  # stackable damping for old clusters
 
-				# ✅ Log damped cluster and particle count
+				# Log damped cluster and particle count
 				clusters_damped += 1
-				particles_damped += len(cluster)
-
-				for idx in cluster:
+				particles_damped += len(cluster_members)
+				
+				for idx in cluster_members:
 					v_before = quantum.velocities[idx].copy()
 					quantum.velocities[idx] *= damp_factor
 					v_after = quantum.velocities[idx]
 					frame_ke_loss += 0.5 * (np.dot(v_before, v_before) - np.dot(v_after, v_after))
-	
-	if quantum.verbose or HEADLESS:
-		print(f"Min: {min(cluster_radius_stats)}, Max: {max(cluster_radius_stats)}, Avg: {np.mean(cluster_radius_stats):.2f}")
-	# Log counts
-	stable_count = len(set(proton_clusters)) // 3
-	unstable_count = len(unstable_clusters)
+
+
+	total_clusters = sum(len(v) for v in clusters_by_size.values())
+	max_cluster_size = max(clusters_by_size.keys(), default=0)
+	velocity_mags = np.linalg.norm(quantum.velocities, axis=1)
+	velocity_std = np.std(velocity_mags)
 
 	# Lifetimes
 	for pid in new_proton_ids:
-		proton_lifetimes[pid] = proton_lifetimes.get(pid, 0) + 1
-
-	distances = pdist(quantum.positions)
-	if quantum.verbose or HEADLESS:
-		print("Min distance:", np.min(distances))
-		print("Max distance:", np.max(distances))
-		print("Mean distance:", np.mean(distances))
+		quantum.proton_lifetimes[pid] = quantum.proton_lifetimes.get(pid, 0) + 1
 
 	# Track proton birth/death
-	just_died = previous_proton_ids - new_proton_ids
-	
+	just_died = quantum.previous_proton_ids - new_proton_ids
+
 	# Record proton death frames
 	for cluster in just_died:
 		if cluster not in quantum.proton_death_frames:
 			quantum.proton_death_frames[cluster] = quantum.frame
-	
-	just_born = new_proton_ids - previous_proton_ids
-	previous_proton_ids = new_proton_ids
-	
+
+	just_born = new_proton_ids - quantum.previous_proton_ids
+	quantum.previous_proton_ids = new_proton_ids
+
 	#Store stable proton clusters
 	quantum.stable_proton_clusters = new_proton_ids
-	
+
 	# Track proton birth frames
 	for cluster in just_born:
 		if cluster not in quantum.proton_birth_frames:
 			quantum.proton_birth_frames[cluster] = quantum.frame
-	
-	#print(f"[DEBUG] Total birth frames tracked: {sum(len(v) for v in quantum.cluster_birth_frames.values())}")
-	
+
 	# Compute lifetime of existing protons
 	lifetimes = {
 		cluster: frame - quantum.proton_birth_frames[cluster]
 		for cluster in quantum.stable_proton_clusters
 		if cluster in quantum.proton_birth_frames
 	}
-	
-	# Detect deaths and update lifetimes
-	for size in quantum.previous_clusters_by_size:
-		just_died = quantum.previous_clusters_by_size[size] - quantum.current_clusters_by_size[size]
-		for cid in just_died:
-			if cid not in quantum.cluster_death_frames[size]:
-				birth = quantum.cluster_birth_frames[size].get(cid, quantum.frame - 1)
-				quantum.cluster_death_frames[size][cid] = quantum.frame
-				quantum.cluster_lifetimes[size][cid] = quantum.frame - birth
-		
-	if quantum.verbose or HEADLESS:
-		# Terminal logging
-		print(f"Frame {frame:4}: Stable Protons: {stable_count:2} | Unstable Particles: {unstable_count:3} | KE: {quantum.kinetic_energy():.5f}")
-		print(f"New Protons: {len(just_born)} | Dissolved: {len(just_died)} | Long-lived: {sum(1 for v in proton_lifetimes.values() if v > 20)}")
 
-		if quantum.last_spin_flips > 0 or quantum.last_color_flip > 0:
-			print(f"Spin Flips: {quantum.last_spin_flips} | Color Flip: {quantum.last_color_flip}")
+	# Make sure IDs are sorted and consistent
+	generate_id = lambda cluster: ":".join(map(str, sorted(cluster)))
 
-		cluster_sizes = Counter(len(tree.query_ball_point(quantum.positions[i], 2.2 * PLANCK_LENGTH)) for i in range(quantum.N))
-		print(f"Cluster sizes: {dict(cluster_sizes)}")
+	prev_ids = set(generate_id(c) for c in quantum.previous_clusters_by_size.get(size, []))
+	curr_ids = set(generate_id(c) for c in quantum.current_clusters_by_size[size])
 
-		# Optionally show detailed changes
-		if just_born:
-			print(f" Born: {sorted(just_born)}")
-		if just_died:
-			print(f" Died: {sorted(just_died)}")
+	just_died = prev_ids - curr_ids
+
+	for cid in just_died:
+		if cid not in quantum.cluster_death_frames[size]:
+			birth = quantum.cluster_birth_frames[size].get(cid, quantum.frame - 1)
+			quantum.cluster_death_frames[size][cid] = quantum.frame
+			quantum.cluster_lifetimes[size][cid] = quantum.frame - birth
 
 	# Color handling as before
 	colors_array = np.array(['blue' if c == 1 else 'red' for c in quantum.colors], dtype='<U5')
 	for idx in set(proton_clusters):
 		colors_array[idx] = 'green'
 
-	if not HEADLESS:
+	if not quantum.headless:
 		scatter._offsets3d = (quantum.positions[:, 0],
 							  quantum.positions[:, 1],
 							  quantum.positions[:, 2])
 		scatter.set_color(colors_array)
 		scatter.set_sizes(np.where(colors_array == 'green', 800, 400))
-	
+
 	write_summary_row(
 		quantum.log_dir, frame, ke,
-		stable_count, unstable_count,
 		just_born, just_died,
 		quantum.last_spin_flips, quantum.last_color_flip,
 		cluster_radius_stats,
-		np.min(distances), np.max(distances), np.mean(distances),
-		frame_ke_loss, clusters_damped, particles_damped
+		frame_ke_loss, clusters_damped, particles_damped,
+		quantum.frame_force_magnitude,
+		quantum.frame_force_work,
+		quantum.frame_avg_force_velocity_cos,
+		total_clusters, max_cluster_size, velocity_std
 	)
-	
-	ke, pe, h_total = compute_lj_hamiltonian(
-		quantum.positions, quantum.velocities, quantum.N,
-		epsilon=quantum.epsilon,
-		sigma=quantum.sigma,
-		BOX_SIZE=quantum.BOX_SIZE
-	)
-	
+
+	if quantum.fast:
+		ke, pe, h_total = compute_hamiltonian_energy_fast_dcp(
+			quantum.positions,
+			quantum.velocities,
+			quantum.N,
+			quantum.D,
+			quantum.alpha,
+			quantum.r0,
+			quantum.dcp_k,
+			quantum.dcp_cutoff,
+			quantum.BOX_SIZE
+		)
+		
+	else:
+		ke, pe, h_total = compute_hamiltonian_energy_safe_dcp(
+			quantum.positions,
+			quantum.velocities,
+			quantum.N,
+			quantum.D,
+			quantum.alpha,
+			quantum.r0,
+			quantum.dcp_k,
+			quantum.dcp_cutoff,
+			quantum.BOX_SIZE
+		)
+
 	write_quantum_log_row(
 		quantum.log_dir,
 		frame,
@@ -791,58 +1605,63 @@ def update(frame):
 		quantum.DT,
 		ke, pe, h_total
 	)
-	
-	if quantum.verbose or HEADLESS:
-		print(f"Frame {frame}: KE Lost via Radiative Damping = {frame_ke_loss:.5f}")
-	
-	if frame > 0 and frame % 100 == 0:
-		write_unstable_particles(quantum.log_dir, unstable_log_data)
-		write_unknown_particles(quantum.log_dir, unknown_particle_log)
-	
-	if frame % 10 == 0:
-		write_charge_lifetimes_framewise(
-			quantum.log_dir,
-			frame,
-			quantum.proton_birth_frames,
-			quantum.stable_proton_clusters,
-			quantum.proton_charges
-		)
-		lifetimes = {
-			cluster: frame - quantum.proton_birth_frames[cluster]
-			for cluster in quantum.stable_proton_clusters
-			if cluster in quantum.proton_birth_frames
-		}
-		bin_size = 10
-		lifetime_bins = defaultdict(int)
-		for life in lifetimes.values():
-			bucket = (life // bin_size) * bin_size
-			lifetime_bins[bucket] += 1
 
-		write_lifetime_histogram_row(quantum.log_dir, frame, lifetime_bins)
-		
+	if frame % 500 == 0:
 		write_binding_energy(quantum.log_dir, energy_log_data)
-		
-	cal = MAX_FRAMES - 1
+	
+	frame_end = time.time()
+	frame_duration = frame_end - frame_start
+
+	elapsed_total = frame_end - quantum.start_time
+	remaining_frames = quantum.frames - frame
+	est_remaining_time = frame_duration * remaining_frames
+	est_total_time = elapsed_total + est_remaining_time
+
+	real = frame + 1
+
+	if quantum.verbose or quantum.headless:
+		log_line = (
+			f"[Frame {frame:5}] KE={quantum.kinetic_energy():.5f}"
+			f" | Spin={quantum.last_spin_flips} Color={quantum.last_color_flip}"
+		)
+
+		if just_born:
+			log_line += f" | +{len(just_born)} Born"
+		if just_died:
+			log_line += f" | -{len(just_died)} Died"
+
+		log_line += f" | KE Loss={frame_ke_loss:.5f}"
+		log_line += (
+			f"\n           Time/frame: {frame_duration:.3f}s"
+			f" | Elapsed: {elapsed_total/60:.1f} min"
+			f" | ETA: {est_remaining_time/60:.1f} min"
+			f" | Total: {est_total_time/60:.1f} min"
+		)
+		log_line += (
+			f"\n           Cluster sizes → Min: {min(cluster_radius_stats)}, "
+			f"Max: {max(cluster_radius_stats)}, Avg: {np.mean(cluster_radius_stats):.2f}"
+		)
+
+		print(log_line)
+	
+	cal = quantum.frames - 1
 	if frame == cal:
-		#print("[DEBUG] Final frame reached, checking cluster survival...")
-		#print(f"[DEBUG] Final cluster size map: {dict((k, len(v)) for k, v in quantum.current_clusters_by_size.items())}")
 		for size, active_clusters in quantum.current_clusters_by_size.items():
-			#print(f"[DEBUG] Size {size}: {len(active_clusters)} clusters")
 			for cid in active_clusters:
 				if cid not in quantum.cluster_birth_frames[size]:
-					#print(f"[DEBUG] Cluster {cid} has no recorded birth.")
 					continue
 				birth = quantum.cluster_birth_frames[size][cid]
-				lifetime = MAX_FRAMES - birth
-				quantum.cluster_death_frames[size][cid] = MAX_FRAMES
+				lifetime = quantum.frames - birth
+				quantum.cluster_death_frames[size][cid] = quantum.frames
 				quantum.cluster_lifetimes[size][cid] = lifetime
 
 		total_lifetimes = sum(len(v) for v in quantum.cluster_lifetimes.values())
-		#print(f"[DEBUG] Total lifetimes recorded: {total_lifetimes}")
 
 		write_cluster_lifetimes(quantum.log_dir, quantum.cluster_lifetimes)
-		print("Simulation complete. Closing animation.")
-		if not HEADLESS:
+		write_hash_manifest(quantum.log_dir)
+		if quantum.verbose or quantum.headless:
+			print("Simulation complete. Closing animation.")
+		if not quantum.headless:
 			plt.close()  # This will close the window when the last frame is rendered
 	else:
 		# Swap trackers for next frame
@@ -851,55 +1670,88 @@ def update(frame):
 			for size, clusters in quantum.current_clusters_by_size.items()
 		}
 		quantum.current_clusters_by_size = defaultdict(set)
-	
-	frame_end = time.time()
-	frame_duration = frame_end - frame_start
 
-	elapsed_total = frame_end - start_time
-	remaining_frames = MAX_FRAMES - frame
-	est_remaining_time = frame_duration * remaining_frames
-	est_total_time = elapsed_total + est_remaining_time
+	quantum.live_stats = {
+		# Existing stats...
+		"KE": f"{quantum.ke:.5f}",
+		"KE Loss": f"{frame_ke_loss:.5f}",
+		"Clusters Damped": f"{clusters_damped}",
+		"Particles Damped": f"{particles_damped}",
+		"Total Clusters": f"{total_clusters}",
+		"Max Cluster Size": f"{max_cluster_size}",
+		"Spin Flips": f"{quantum.last_spin_flips}",
+		"Color Flips": f"{quantum.last_color_flip}",
+		"cos(F·v)": f"{quantum.frame_avg_force_velocity_cos:.3f}",
+		"Work": f"{quantum.frame_force_work:.5f}",
+		"Avg Force": f"{quantum.frame_force_magnitude:.5f}",
+
+		# Timing stats
+		"Elapsed Time": f"{elapsed_total:.2f}",
+		"ETA": f"{est_remaining_time:.2f}",
+		"Est Total": f"{est_total_time:.2f}",
+		"Frame Time": f"{frame_duration:.3f}",
+		"Frame": real  # this will be used for progress bar too
+	}
 	
-	real = frame + 1
-	if real % 100 == 0:  # or % 100 to reduce spam
-		print(f"[Frame {frame}] Time/frame: {frame_duration:.3f}s | "
-			  f"Elapsed: {elapsed_total/60:.1f} min | "
-			  f"ETA: {est_remaining_time/60:.1f} min | "
-			  f"Est Total: {est_total_time/60:.1f} min")
-	
-	return (scatter,) if not HEADLESS else None
+	return (scatter,) if not quantum.headless else None
+
+### ──────────────────────── Primary Update Function ───────────────────── ###
+
+### ──────────────────────── __main__ Runtime Execution ────────────────── ###
 
 if __name__ == "__main__":
 	import argparse
 
 	parser = argparse.ArgumentParser(description="Run the Quantum Sphere Simulation")
-	parser.add_argument('--config', type=str, help="Path to metadata.json config file")
-	parser.add_argument('--headless', action='store_true', help="Run simulation without visualization")
+	parser.add_argument('--config', type=str, help="Path to logs folder of previous run.")
+	parser.add_argument('--headless', action='store_true', help="Run simulation without visualization.")
 	parser.add_argument('--outdir', type=str, help="Optional output directory to save logs.")
 	parser.add_argument('--verbose', action='store_true', help="Print live simulation output to terminal.")
+	parser.add_argument('--fast', action='store_true', help="Enable Numba parallel=True (non-deterministic)")
+	parser.add_argument('--N', type=int, help="Number of particles (overrides default or config)")
+	parser.add_argument('--frames', type=int, help="Number of frames to run (overrides default or config)")
+	parser.add_argument('--boxsize', type=float, help="Size of the 3D toroidal cube (float).")
+
 	args = parser.parse_args()
-	
-	if args.config and not os.path.isfile(args.config):
-		print(f"[Error] Metadata file not found: {args.config}")
+
+	if args.config and not os.path.isfile(os.path.join(args.config, "metadata.json")):
+		print(f"[Error] metadata.json not found in: {args.config}")
 		sys.exit(1)
 
-	quantum = QuantumUniverse(config_path=args.config, output_dir=args.outdir, verbose=args.verbose)
+	# Fallbacks for override mode (no config)
+	if args.headless is None:
+		args.headless = False
+	if args.N is None:
+		args.N = 2000
+	if args.frames is None:
+		args.frames = 50000
+
+	quantum = QuantumUniverse(
+		config_path=args.config,
+		output_dir=args.outdir,
+		verbose=args.verbose,
+		fast=args.fast,
+		override_N=args.N,
+		override_frames=args.frames,
+		headless=args.headless
+	)
 
 	if args.headless:
-		HEADLESS = args.headless
-		for frame in range(MAX_FRAMES):
-			update(frame)  # Executes simulation + logging
+		for frame in range(args.frames):  # typo fixed here
+			update(frame)
 	else:
 		fig = plt.figure(figsize=(10, 8))
 		ax = fig.add_subplot(111, projection='3d')
-		ax.set_xlim(0, 6)
-		ax.set_ylim(0, 6)
-		ax.set_zlim(0, 6)
+		ax.set_xlim(0, quantum.BOX_SIZE)
+		ax.set_ylim(0, quantum.BOX_SIZE)
+		ax.set_zlim(0, quantum.BOX_SIZE)
 		scatter = ax.scatter(
 			quantum.positions[:, 0],
 			quantum.positions[:, 1],
 			quantum.positions[:, 2],
 			s=600, c=quantum.spins, cmap='coolwarm', alpha=0.9
 		)
-		ani = FuncAnimation(fig, update, frames=MAX_FRAMES, interval=20, blit=False)
+		ani = FuncAnimation(fig, update, frames=args.frames, interval=20, blit=False)
 		plt.show()
+
+### ──────────────────────── __main__ Runtime Execution ────────────────── ###
