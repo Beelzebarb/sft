@@ -1,59 +1,78 @@
 # Spherical Field Theory (SFT) Quantum Simulator
 
-UPDATE: This simulation has died a horrible death, the equations broke down once the simulation was moved over to toroidal space. 
+Spherical Field Theory is the idea that at the most basic and small scale, the Planck-scale, that there exist discrete interacting spheres that only interact with local neighbours.
 
-Runaway kinetic enerrgy no dampening would fix, things would still form, but the previous stability i had seen it seems was entirely because of globally applied damping rules that once removed and taken fully local, the equations do not work, either mine or Lennard-Jones based equations which was also tried.
+The idea for this theory came from the brilliance of Paul Dirac's work, and his belief in total and complete Locality. This principle is the entire thing that allows SFT to work as it does. 
 
-The other thing that does work, was toroidal space is set up correctly in the simulation, its just the equations themselves are incorrect.
+This project has had a lot of ups and downs, I thought it was dead when I couldn't get the system to function without scaffolding holding it up in the code it was dead, but that has been resolved.
+It now maintains stability through 100,000 frames deterministic across linux and windows and desktop and server hardware still, but the force equations have been completely redone.
 
-Unless someone else can fix the math, this project isn't ever going to work.
+The entire theory now operates on a custom usage of the Morse potential and a new implementation named Dirac Core Pressure, which acts as a short-range quantum exclusion force.
+
+**Personal Note:** This entire idea is because of Paul Dirac, and his vision and philosphy of locality. He inspired me to have the idea, to make the simulation and now because of that i decided to name the short-range quantum exclusion force as the Dirac Core Pressure, his philosphy and work live on.
+
+Also, Philip M. Morse, who developed the Morse potential now used in this theory and the simulation, thank you for your amazing and excellent work, it lives on today as well inside SFT.
 
 ---
 
-This project is a simulation based on the observable forces we know of in 3 dimensional space plus time (3+1D) operating at the Planck/Quantum scale. The model is a computational toy model derived from an effective Lagrangian.
+### Observed behavior since fine tuning the system using the new force equations:
 
-This was built as a way to answer a question that i had: "What if the quantum level was made of discrete interacting spheres?"
+- **Energy-Driven Mass Emergence**
+  - Energy is the first state. As it concentrates through clustering, it becomes mass — which resists motion and deepens gravitational influence.
+  - Because mass is energy, this clustering draws in more energy, increasing mass further.
+  - Clustering → Energy Density ↑ → Gravity ↑ → Clustering ↑
+  - The result is a feedback loop: clustering increases energy density, which increases gravitational pull, which in turn amplifies clustering.
+- **Relativisitc Behavior from First Principles**
+  - The system respects a speed limit that was never defined in the code or equations.
+  - It exhibits mass-energy conversion, local time dilation (via adaptive timestep), and resistance to acceleration — all purely from geometric interaction.
+- **Emergent Decoherence Storms ("Spin Storms")**
+  - The system builds tension over time. When local density and force exceed a threshold, the field enters a state of quantum instability:
+  - a rapid, storm-like burst of spin flips occurs.
+  - These storms:
+    - Release pressure without breaking relativistic constraints
+    - Get shorter, but more intense over time
+    - May be part of a self-regulating cycle to maintain field stability
+	- Only happen under deterministic runs, using --fast which enables parallel calculations, storms do not occur.
 
-I made this simulation, hand-tuned it and was able to achieve metastability of proton-like clusters that were forming.
-
-After that i was able to use the data i recorded and below are the equations that this model now incorporates. 
-
-When switching from hand-tuned forces to Lagrangian based forces, the Kinetic Energy after about 2100+ frames out of 5000 would hit a perfect stability across increasingly larger particle count runs of the simulation.
-
-Yes, this model uses a classical framework. Yes, this model uses force-field based interactions, which are related to force-field based Molecular Dynamics.
-
-Yes, this model is showing possible quantum-like emergent behavior that i did not specifically code.
+These behaviors are not programmed.
+They emerge from the model itself — from locality, force, and motion alone.
 
 ---
 
 ## 📐 Theoretical Foundation
 
-This model incorporates:
 
-- The **effective Lagrangian** captures repulsive, attractive, and confining components through a custom interaction potential.
+The custom potential energy function combines attractive and repulsive terms through a Morse-like interaction with short-range Dirac Core Pressure:
 
-  ```L = Σᵢ (½ m * |vᵢ|²) - Σ_{i<j} [ A / (3 * |xᵢ - xⱼ|³) - (B / 2) * |xᵢ - xⱼ|² + C * |xᵢ - xⱼ| ]```
-  
-- A **Hamiltonian diagnostic** tracking kinetic, potential, and total energy at each frame, below is the Hamiltonian equation:
+	```V(r) = D * (1 - exp(-α * (r - r₀)))² - k / r   (if r < cutoff)```
 
-  ```H = Σᵢ (pᵢ² / 2m) + Σ_{i<j} [ A / |xᵢ - xⱼ|³ - B * |xᵢ - xⱼ|² + C * |xᵢ - xⱼ| ]```
+The force derived from this potential (negative gradient of V) is split into two terms:
 
-- A **Euler-Lagrange** Derived force law:
+	```F_total = (F_morse + F_dcp) * (xᵢ - xⱼ) / |xᵢ - xⱼ|```
+Where:
 
-  ```m * aᵢ = Σ_{j ≠ i} [ (A / |xᵢ - xⱼ|⁴) - B * |xᵢ - xⱼ| - C ] * (xᵢ - xⱼ) / |xᵢ - xⱼ|```
+		```F_morse = -2 * D * α * (1 - e^(-α * (r - r₀))) * e^(-α * (r - r₀))```
 
-These derivations bring classical modeling closer to quantum-like emergence — with potential for further theoretical analysis.
+		```F_dcp = k / r² (only active if r < cutoff)```
+
+The adaptive timestep DT is dynamically calculated every frame using local velocity and force magnitudes:
+
+	```DT = 0.001 * min(1.0, 0.1 / max_force, 0.1 / max_velocity)```
+
+Then smoothed:
+	
+	```self.DT = 0.9 * self.DT + 0.1 * DT_dynamic```
 
 ---
 
 ## 💡 Features
 
 - **Metastability**: Proton birth and decay from interacting triplet clusters.
-- **Emergent behavior** from Pauli exclusion, confinement, nuclear attraction, and gravity.
+- **Emergent behavior** from Dirac Core Pressure, Morse potential and gravity scaling by energy.
 - **Self-regulating DT (timestep)** for consistent and stable simulation speeds.
 - **Scalable**: Verified up to `N=3000` particles, cross-platform stable.
 - **Headless mode**: Run high-N simulations without graphical overhead.
-- **Logging**: Summary, proton lifetimes (histogram), quantum events per frame.
+- **Logging**: Summary, quantum events per frame, proton binding energy per frame, cluster lifetimes by size.
 - **Replayable**: Supply `metadata.json` from a previous run to recreate identical behavior.
 
 ---
