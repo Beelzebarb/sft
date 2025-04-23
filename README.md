@@ -8,7 +8,7 @@ This project has had a lot of ups and downs, I thought it was dead when I couldn
 
 It now maintains stability through 100,000 frames deterministic across Linux and Windows as well as Desktop and Rackmount Server hardware still, but the force equations have been completely redone.
 
-The entire theory now operates on a custom usage of the Morse potential and a new implementation named Dirac Core Pressure, which acts as a short-range quantum exclusion force.
+The entire theory now operates on a custom usage of the Morse potential and a new implementation named the Dirac Core Pressure, which acts as a short-range quantum exclusion force.
 
 **Personal Note:** This entire idea is because of Paul Dirac, and his vision and philosphy of locality. He inspired me to have the idea, to make the simulation and now because of that i decided to name the short-range quantum exclusion force as the Dirac Core Pressure, his philosphy and work live on.
 
