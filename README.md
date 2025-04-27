@@ -181,6 +181,7 @@ Adjust settings either in `sft-cpu.py` before running or via `metadata.json`. Ke
 	"fast": false,
 	"cluster_energy_input": "np_array_int32",
 	"reflected_list_mode": false,
+    "source_hash": "c4f1def8d926799da9e506b0fb5b2dc1e50386cccd8da6cf53a61322518257da" -> Changes based on source code changes. Deterministic --config runs do not allow different versions to run them as results cannot be guaranteed.
 }
 ```
 
