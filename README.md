@@ -9,7 +9,7 @@ It now maintains stability through 100,000 frames deterministic across linux and
 
 The entire theory now operates on a custom usage of the Morse potential and a new implementation named Dirac Core Pressure, which acts as a short-range quantum exclusion force.
 
-**Personal Note:** This entire idea is because of **Paul Dirac**, and his vision and philosphy of **locality**. He inspired me to have the idea, to make the simulation and now because of that I decided to name the short-range quantum exclusion force as the Dirac Core Pressure, his philosphy and work live on.
+**Personal Note:** This entire idea is because of **Paul Dirac**, and his vision and philosophy of **locality**. He inspired me to have the idea, to make the simulation and now because of that I decided to name the short-range quantum exclusion force as the Dirac Core Pressure, his philosophy and work live on.
 
 Also, Philip M. Morse, who developed the Morse potential now used in this theory and the simulation, thank you for your amazing and excellent work, it lives on today as well inside SFT.
 
@@ -160,7 +160,7 @@ Benchmark runs will soon be found under the folder results_v2, once i get them u
 
 ## ⚙️ Configuration
 
-Adjust settings either in `sft-cpu.py` before running or via `metadata.json`. Please note `source_hash` changes based on any single change in the code. Key parameters include:
+Adjust settings either in `sft-cpu.py` before running or via `metadata.json`. Key parameters include:
 
 ```json
 {
@@ -181,7 +181,6 @@ Adjust settings either in `sft-cpu.py` before running or via `metadata.json`. Pl
 	"fast": false,
 	"cluster_energy_input": "np_array_int32",
 	"reflected_list_mode": false,
-	"source_hash": "c4f1def8d926799da9e506b0fb5b2dc1e50386cccd8da6cf53a61322518257da"
 }
 ```
 
