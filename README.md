@@ -111,13 +111,13 @@ pip install -r requirements.txt
 ### Graphical mode (default):
 
 ```bash
-python sft-cpu.py
+python sft_qsim.py
 ```
 
 ### Headless mode with metadata replay:
 
 ```bash
-python sft-cpu.py --config logs/run_YYYYMMDD_HHMMSS/metadata.json --headless
+python sft_qsim.py --config logs/run_YYYYMMDD_HHMMSS/metadata.json --headless
 ```
 
 ---
@@ -148,7 +148,7 @@ All test environments used the same workflow:
 git clone https://github.com/Beelzebarb/sft.git
 cd sft
 pip install -r requirements.txt
-python sft-cpu.py --headless
+python sft_qsim.py --headless
 ```
 
 No manual patching or system-specific modifications required.
@@ -174,7 +174,7 @@ Benchmark runs will soon be found under the folder results_v2, once i get them u
 
 ## ⚙️ Configuration
 
-Adjust settings either in `sft-cpu.py` before running or via `metadata.json`. Key parameters include:
+Adjust settings either in `sft_qsim.py` before running or via `metadata.json`. Key parameters include:
 
 ```json
 {
