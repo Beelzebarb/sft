@@ -83,7 +83,7 @@ Then smoothed:
 - **Emergent behavior** from Dirac Core Pressure, Morse potential and gravity scaling by energy.
 - **Self-regulating DT (timestep)** for consistent and stable simulation speeds.
 - **Scalable**: Verified up to `N=3000` particles, cross-platform stable.
-- **Headless mode**: Run high-N simulations without graphical overhead.
+- **Headless mode**: Simulation engine is entirely headless, no GUI, GUI is separated and connects via NetworkBeam.
 - **Logging**: Summary, quantum events per frame, proton binding energy per frame, cluster lifetimes by size.
 - **Replayable**: Supply `metadata.json` from a previous run to recreate identical behavior.
 
@@ -211,7 +211,7 @@ A testbed for **Spherical Field Theory** (SFT), a novel idea that quantum behavi
 
 ## 📍 Status
 
-- ✅ Works on Linux and Windows (CLI and graphical)
+- ✅ Works on Linux and Windows (CLI-based engine, GUI is SFT Q3S and is separate and connects to the siim via NetworkBeam)
 - ✅ Reproducible metastability
 - ✅ Fast multithreaded performance (via Numba)
 - ✅ Further analysis tooling and visualizers (Done!) - SFT Q3S is being finalized, and CLI tools have already been made, first release will contain all of them.
