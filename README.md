@@ -214,7 +214,7 @@ A testbed for **Spherical Field Theory** (SFT), a novel idea that quantum behavi
 - ✅ Works on Linux and Windows (CLI and graphical)
 - ✅ Reproducible metastability
 - ✅ Fast multithreaded performance (via Numba)
-- 🔜 Further analysis tooling and visualizers
+- ✅ Further analysis tooling and visualizers (Done!) - SFT Q3S is being finalized, and CLI tools have already been made, first release will contain all of them.
 
 ---
 
