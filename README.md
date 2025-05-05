@@ -15,27 +15,39 @@ Also, Philip M. Morse, who developed the Morse potential now used in this theory
 
 ---
 
-### Observed behavior since fine tuning the system using the new force equations:
+## Observed Phenomena
 
-- **Energy-Driven Mass Emergence**
-  - Energy is the first state. As it concentrates through clustering, it becomes mass — which resists motion and deepens gravitational influence.
-  - Because mass is energy, this clustering draws in more energy, increasing mass further.
-  - Clustering → Energy Density ↑ → Gravity ↑ → Clustering ↑
-  - The result is a feedback loop: clustering increases energy density, which increases gravitational pull, which in turn amplifies clustering.
-- **Relativisitc Behavior from First Principles**
-  - The system respects a speed limit that was never defined in the code or equations.
-  - It exhibits mass-energy conversion, local time dilation (via adaptive timestep), and resistance to acceleration — all purely from geometric interaction.
-- **Emergent Decoherence Storms ("Spin Storms")**
-  - The system builds tension over time. When local density and force exceed a threshold, the field enters a state of quantum instability:
-  - a rapid, storm-like burst of spin flips occurs.
-  - These storms:
-    - Release pressure without breaking relativistic constraints
-    - Get shorter, but more intense over time
-    - May be part of a self-regulating cycle to maintain field stability
-	- Only happen under deterministic runs, using --fast which enables parallel calculations, storms do not occur.
+- **Mass Emergence from Energy**
+  - Particles slow as they cluster, converting kinetic energy into localized potential energy, perceived as “mass.”
+  - Denser clusters experience stronger gravity-like attraction and resistance to acceleration.
 
-These behaviors are not programmed.
-They emerge from the model itself — from locality, force, and motion alone.
+- **Relativistic Behavior (Emergent, Not Imposed)**
+  - Time dilation arises naturally from local density and force feedback.
+  - No speed limit is programmed — but one emerges.
+  - Energy conversion and mass-like inertia occur from local motion alone.
+
+- **SpinStorm Events (Decoherence Storms)**
+  - Massive bursts of spin flips triggered by force/density thresholds.
+  - Only arise in **deterministic, sequential runs**.
+  - Display repeatable start/end frames, cluster behavior, and energy shifts.
+
+- **Black Hole and Neutron Star Analogs**
+  - At extreme density, SFT simulates:
+    - **Diracium (Black Hole analogs)**: Perfect KE suppression, total gravitational collapse.
+    - **Morsium (Neutron Star analogs)**: Quasi-static structure with creeping energy rise, potential cause of **starquakes**.
+
+---
+
+## Technical Highlights
+
+- Built in Python, Numba-accelerated, fully multithreaded.
+- Cross-platform: confirmed on Windows/Linux, desktop/server, virtual/baremetal.
+- Deterministic SHA256-locked execution with full per-run verification.
+- Extensible sensor suite (PyQt-based) with real-time entropy, KE, cluster, and storm detection.
+
+---
+
+*Note: All emergent phenomena arise strictly from local force interaction. Nothing is hardcoded. Nothing is assumed.*
 
 ---
 
