@@ -83,6 +83,8 @@ Then smoothed:
 - Numba
 - NumPy
 - SciPy
+- msgpack
+- zstandard
 
 Install with:
 
