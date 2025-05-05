@@ -195,7 +195,7 @@ Adjust settings either in `sft_qsim.py` before running or via `metadata.json`. K
 	"fast": false,
 	"cluster_energy_input": "np_array_int32",
 	"reflected_list_mode": false,
-    "source_hash": "c4f1def8d926799da9e506b0fb5b2dc1e50386cccd8da6cf53a61322518257da"
+    	"source_hash": "c4f1def8d926799da9e506b0fb5b2dc1e50386cccd8da6cf53a61322518257da"
 }
 ```
 
