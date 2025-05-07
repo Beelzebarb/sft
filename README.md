@@ -36,6 +36,10 @@ Also, Philip M. Morse, who developed the Morse potential now used in this theory
     - **Diracium (Black Hole analogs)**: Perfect KE suppression, total gravitational collapse.
     - **Morsium (Neutron Star analogs)**: Quasi-static structure with creeping energy rise, potential cause of **starquakes**.
 
+- **The Sykes Certainty Condition**
+  - If you can know the entire quantum state of an object, it is not impossible to recreate that object so long as resolution of emitters and actuators is fine enough and energy is plentiful.
+    - This shows during simulations that Heisenberg's Uncertainty Principle isn't fundamental, it's merely what happens when you do not scan or know the entire quantum state of an object, if you do, recreation of it via energy to matter is simple with proper resolution tools.
+
 ---
 
 ## Technical Highlights
