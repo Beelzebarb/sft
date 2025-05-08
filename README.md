@@ -237,7 +237,6 @@ A testbed for **Spherical Field Theory** (SFT), a novel idea that quantum behavi
 
 - **Paul Dirac** - Discovered antimatter and the Dirac equation, his belief in **locality** inspired me to build this. I named the Dirac Core Pressure after him, which is a custom short-range quantum exclusion force.
 - **Philip M. Morse** - Inventor of the Morse Potential which is used along the Dirac Core Pressure to stabilize the quantum universe. Without it, this would never work.
-- **Mike Cordeau** - Was the person who donated an R740 to me, and further parts for it to increase its processing, without him, the dataset wouldn't have been possible across such vastly different hardware in the time it was done.
 - **ChatGPT** helped me with the calculus, force derivations and very tedious debugging of issues in the early days.
 
 ---
