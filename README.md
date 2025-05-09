@@ -5,7 +5,7 @@ Spherical Field Theory is the idea that at the most basic and small scale, the P
 The idea for this theory came from the brilliance of Paul Dirac's work, and his belief in total and complete locality. This principle is the entire thing that allows SFT to work as it does. 
 
 This project has had a lot of ups and downs, I thought it was dead when I couldn't get the system to function without scaffolding holding it up in the code it was dead, but that has been resolved.
-It now maintains stability through 100,000 frames deterministic across linux and windows and desktop and server hardware still, but the force equations have been completely redone.
+It now maintains stability through 150,000 frames deterministic across linux and windows and desktop and server hardware still, but the force equations have been completely redone.
 
 The entire theory now operates on a custom usage of the Morse potential and a new implementation named Dirac Core Pressure, which acts as a short-range quantum exclusion force.
 
@@ -89,8 +89,8 @@ Then smoothed:
 - **Metastability**: Proton birth and decay from interacting triplet clusters.
 - **Emergent behavior** from Dirac Core Pressure, Morse potential and gravity scaling by energy.
 - **Self-regulating DT (timestep)** for consistent and stable simulation speeds.
-- **Scalable**: Verified up to `N=3000` particles, cross-platform stable.
-- **Headless mode**: Simulation engine is entirely headless, no GUI, GUI is separated and connects via NetworkBeam.
+- **Scalable**: Verified up to `N=3500` particles, cross-platform stable.
+- **Headless mode**: Simulation engine is entirely headless. GUI is separated and connects via NetworkBeam.
 - **Logging**: Summary, quantum events per frame, proton binding energy per frame, cluster lifetimes by size.
 - **Replayable**: Supply `metadata.json` from a previous run to recreate identical behavior.
 
