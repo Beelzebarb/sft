@@ -108,23 +108,36 @@ Then smoothed:
 Install with:
 
 ```bash
+git clone https://github.com/Beelzebarb/sft.git
+cd sft
 pip install -r requirements.txt
+python sft_qsim.py --headless
 ```
+
+Or for Anaconda, using the supplied .yml file:
+
+```bash
+git clone https://github.com/Beelzebarb/sft.git
+cd sft
+conda env create -f sft-qsim.yml
+conda activate sft-qsim 
+```
+
 
 ---
 
 ## 🚀 Running the Simulation
 
-### Graphical mode (default):
+### Headless mode:
 
+Headless mode with supplied config and outdir args:
 ```bash
-python sft_qsim.py
+python sft_qsim.py --config "logs/run_YYYYMMDD_HHMMSS/metadata.json" --outdir "results\N2000-F150000-Control-R740-20250510"
 ```
 
-### Headless mode with metadata replay:
-
+Headless mode with given variables for control run and outdir args:
 ```bash
-python sft_qsim.py --config logs/run_YYYYMMDD_HHMMSS/metadata.json --headless
+python sft_qsim.py --N 2000 --frames 150000 --outdir "results\N2000-F150000-Control-R740-20250510"
 ```
 
 ---
@@ -147,16 +160,11 @@ This project has been successfully tested across a variety of systems and enviro
 
 ---
 
-## 📊 Results & Data Reproducibility
+## 📊 Dataset & Data Reproducibility
 
-All test environments used the same workflow:
-
-```bash
-git clone https://github.com/Beelzebarb/sft.git
-cd sft
-pip install -r requirements.txt
-python sft_qsim.py --headless
-```
+Dataset
+ - 28 runs total, 14 N Counts in increments of 250 from N250-N3500.
+ - Control and Confirm runs run on separate physical machines with different OS (Linux VM on Esxi/Windows 10 on Gaming Desktop)
 
 No manual patching or system-specific modifications required.
 
@@ -168,8 +176,10 @@ Each run generates a full log folder containing:
 - `proton_binding_energy.csv` - per frame Proton Binding Energy statistics.
 - `quantum_logs.csv` — per-frame quantum activity: spin flips, color flips, timestep, and Hamiltonian diagnostics
 - `metadata.json` — config snapshot for full reproducibility
+- `neutrinos.csv` — shows all neutrino candidates flagged by cluster detection. Gives SphereID, Birth/Death Frame and Lifetime.
+- `superproton_decay.csv` — tracks any and all Superproton decay, this is how the sim searches for the birth of EM.
 
-These results have been validated across a range of particle counts (`N=180` to `N=3000`) and environments, demonstrating long-term metastability or full stability.
+These results have been validated across a range of particle counts (`N=180` to `N=3500`) and environments, demonstrating long-term metastability or full stability.
 
 ---
 
