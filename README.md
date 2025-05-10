@@ -175,9 +175,9 @@ Each run generates a full log folder containing:
 - `cluster_lifetimes_size_x.csv` - Tracks cluster lifetimes by size x is replaced with cluster size, each gets its own csv for automation.
 - `proton_binding_energy.csv` - per frame Proton Binding Energy statistics.
 - `quantum_logs.csv` — per-frame quantum activity: spin flips, color flips, timestep, and Hamiltonian diagnostics
-- `metadata.json` — config snapshot for full reproducibility
 - `neutrinos.csv` — shows all neutrino candidates flagged by cluster detection. Gives SphereID, Birth/Death Frame and Lifetime.
 - `superproton_decay.csv` — tracks any and all Superproton decay, this is how the sim searches for the birth of EM.
+- `metadata.json` — config snapshot for full reproducibility
 
 These results have been validated across a range of particle counts (`N=180` to `N=3500`) and environments, demonstrating long-term metastability or full stability.
 
